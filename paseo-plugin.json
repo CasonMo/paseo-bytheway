@@ -1,0 +1,14 @@
+{
+  "id": "paseo-bytheway",
+  "name": "ByTheWay 侧聊",
+  "description": "ByTheWay · 旁路侧聊：实时执行流、多线程、agent 直连上下文、模型对比 / ByTheWay side chats for Paseo sessions: live execution stream, threads, agent-linked context, model comparison",
+  "requirements": {
+    "paseo": ">=0.12.0"
+  },
+  "media": [
+    "assets/screenshot.png",
+    "assets/screenshot-commands.png",
+    "assets/screenshot-settings.png"
+  ],
+  "icon": "assets/icon.png"
+}
