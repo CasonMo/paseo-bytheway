@@ -1,56 +1,4 @@
-# ByTheWay 侧聊
-
-在 Paseo 的任意 agent 会话旁开一条侧聊：提问或做小任务，主会话的转录完全不受打扰。
-
-## 它是怎么工作的
-
-每条侧聊线程的背后是一个运行在同一工作区的临时 agent：
-
-- 从面板或 `/btw` 等命令发起后，插件在 daemon 侧读取主会话最近的对话作为首轮上下文快照，并把问题发给侧聊 agent；
-- 面板直接订阅侧聊 agent 的时间线，实时直播流式文本、思考、工具调用、待办、权限请求与每回合用量；
-- 默认「agent 直连」上下文：侧聊 agent 通过 Paseo 内置工具按需读取主会话的最新进展；工具不可用时自动降级为被动同步（每条消息附带增量上下文）；
-- 转录本身保存在 Paseo 自己的 agent 时间线里；插件只在本机保留线程注册表（线程 id、标题、状态等元数据），不复制问答内容。
-
-## 使用
-
-- `/btw <问题>`：继续当前侧聊线程（没有则新开）；不带问题时只打开面板、不创建线程；`/btw-new <问题>`：新开一条；
-- `/side <任务>` 与 `/side-new <任务>`：Build 模式（可执行任务），语义相同；
-- `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
-- Command Center 可打开「ByTheWay 侧聊」面板与设置页。
-
-## 设置
-
-Paseo 设置 → 插件 → ByTheWay 侧聊：
-
-- 界面语言（跟随系统 / 中文 / English）
-- 默认模式（Chat / Build）与默认模型（跟随主会话或指定 provider/model）
-- 新建线程可跨 Provider 选择模型；已有线程仅支持同一 Provider 内原地切换模型（会话保持连续）
-- 首轮快照深度、动作摘要开关、上下文兜底开关
-- 挂到主会话（侧聊 agent 作为子 agent）
-- AI 线程标题开关与标题生成模型
-- 权限策略（询问 / 自动放行只读 / 全部拒绝）与只读、写类权限的超时自动拒绝时间
-- 并发上限（Chat / Build / 总计）与实验性取消开关
-
-无需账号或额外密钥：插件复用 Paseo 已配置的 agent provider。要求 Paseo 0.12.0 或更高版本；daemon 可运行在 Paseo 支持的任意平台，界面在桌面、Web 与移动端可用。
-
-## 数据与权限
-
-- 读取：通过本机 Paseo daemon 读取主会话与侧聊 agent 的时间线（用于组装上下文与界面展示）；
-- 写入：仅写本机插件数据目录 `~/.paseo/plugin-data/paseo-bytheway/`（线程注册表）；
-- 网络：插件自身不发起任何网络请求。侧聊的提问、上下文快照与工具结果会像普通 Paseo 会话一样发送给你配置的模型提供方用于生成回答；
-- 权限：侧聊 agent 的工具权限请求显示在面板内，可直接批准或拒绝；无人处理时按设置分级超时自动拒绝；
-- 停止：优先通过 Paseo 工具请求取消；未生效时提示在原生标签页中停止。
-
-## 已知限制
-
-- 线程绑定创建它的 daemon 与主会话；主会话被归档后线程标记为已停止，可「重建并继续」；
-- 切换模型会新开一条「接续线程」（先读取旧线程历史再继续）；切换 Chat/Build 模式会就地切换当前线程（下一条消息会附带模式切换说明）；
-- AI 标题生成与实验性取消会短暂创建一个辅助 agent（用后即自动归档，可能短暂出现在 agent 列表中）；
-- 同一时刻运行中的侧聊受并发上限约束；运行中的线程过多时新请求会被拒绝并提示。
-
----
-
-# ByTheWay (English)
+# ByTheWay
 
 Side chats for any Paseo agent session: ask questions or run small side tasks while the
 main session keeps working, and nothing is written to the main transcript.
@@ -101,9 +49,10 @@ and the interface works on desktop, web, and mobile clients.
   context assembly and UI display);
 - Writes: the local plugin data directory `~/.paseo/plugin-data/paseo-bytheway/`
   (thread registry only);
-- Network: the plugin itself makes no network requests. Side-chat questions, context
-  snapshots, and tool results are sent to the model provider you configured in Paseo,
-  exactly like a normal Paseo session;
+- Network: remote images in side-chat messages load directly from their HTTP(S) URLs on
+  the client, so the image host receives that request and the client's network address.
+  Side-chat questions, context snapshots, and tool results are sent to the model provider
+  you configured in Paseo, exactly like a normal Paseo session;
 - Permissions: tool permission requests from side agents appear inline in the panel for
   approval or denial; unanswered requests are auto-denied after the configured tiered
   timeout;
@@ -114,9 +63,10 @@ and the interface works on desktop, web, and mobile clients.
 
 - Threads are bound to the daemon and main session that created them. If the main session
   is archived, threads are marked stopped and can be rebuilt to continue;
-- Changing the model starts a continuation thread that first reads the old thread's
-  history; switching Chat/Build mode switches the current thread in place (the next
-  message carries a mode-switch note);
+- Existing threads switch models in place within their own provider (the provider is
+  fixed when the thread is created; start a new thread to use another provider).
+  Switching Chat/Build mode also switches in place (the next message carries a
+  mode-switch note);
 - AI titles and the experimental cancel create a short-lived helper agent that archives
   itself when done (it may appear briefly in the agent list);
 - Running side chats are limited by the configured concurrency caps; requests beyond the

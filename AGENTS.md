@@ -31,7 +31,9 @@ Paseo plugin requirements we must follow when developing, reviewing, and releasi
   any service of its own.
 - Side-chat content (questions, context snapshots, tool results) is sent to the model
   provider the user configured in Paseo for the side agent, exactly like a normal Paseo
-  session. There are no other network destinations, no telemetry, and no hidden calls.
+  session, and remote images in side-chat messages load on the client directly from
+  their HTTP(S) URLs. Beyond that there are no other network destinations, no telemetry,
+  and no hidden calls.
 - Never log or echo prompts, transcripts, tool output, or context snapshots. Server logs
   may include ids, thread metadata, and lifecycle events only.
 - Helper agents (thread titles, experimental cancel) are short-lived, run on the user's
