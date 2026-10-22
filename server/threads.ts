@@ -2,6 +2,7 @@ import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
 import type { SidekickSettings } from "../shared/settings";
 import type { ThreadMode, ThreadRecord } from "../shared/types";
+import { resolveSendBehavior, type AppliedBehavior } from "../shared/send-behavior";
 import {
   buildIncrementText,
   buildSnapshotText,
@@ -25,17 +26,10 @@ const TITLE_MAX = 60;
 
 /** 就地模式切换时附带的指令（写在消息开头，覆盖创建时的系统提示约束）。 */
 const MODE_SWITCH_PROMPTS = {
-  zh: {
-    toWork:
-      '【模式切换 → Build】从现在起你可以执行任务所需的操作（此前“只读建议模式”的约束取消）；保持改动最小。',
-    toAsk: "【模式切换 → Chat】以只读建议方式回答：不要修改文件、不要执行有副作用的命令。",
-  },
-  en: {
-    toWork:
-      "[Mode switch → Build] You may now perform the actions the task needs; the earlier read-only advice constraint no longer applies. Keep changes minimal.",
-    toAsk:
-      "[Mode switch → Chat] Answer as read-only advice: do not modify files and do not run commands with side effects.",
-  },
+  toWork:
+    "[Mode switch → Build] You may now perform the actions the task needs; the earlier read-only advice constraint no longer applies. Keep changes minimal.",
+  toAsk:
+    "[Mode switch → Chat] Answer as read-only advice: do not modify files and do not run commands with side effects.",
 } as const;
 
 function message(error: unknown): string {
@@ -115,7 +109,6 @@ export interface AskInput {
   model?: string;
   thinkingOptionId?: string | null;
   continuationOf?: string;
-  sendBehavior: "auto" | "interrupt" | "steer";
   clientRequestId?: string;
 }
 
@@ -123,6 +116,8 @@ export interface AskResult {
   threadId: string;
   agentId: string;
   created: boolean;
+  /** 实际生效的发送方式：send=普通发送，interrupt=打断了运行中的回答。 */
+  behavior: AppliedBehavior;
 }
 
 export async function askThread(paseo: PaseoApi, settings: SidekickSettings, input: AskInput): Promise<AskResult> {
@@ -131,7 +126,7 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
   if (input.clientRequestId) {
     const knownId = registry.lookupRequestId(input.clientRequestId);
     const known = knownId ? registry.getThread(knownId) : undefined;
-    if (known) return { threadId: known.id, agentId: known.agentId, created: false };
+    if (known) return { threadId: known.id, agentId: known.agentId, created: false, behavior: "send" };
   }
 
   const mainRef = await paseo.agents.ref(input.mainAgentId).refresh();
@@ -183,7 +178,7 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
     seedFromAgentId: input.continuationOf ?? null,
   });
   if (input.clientRequestId) registry.rememberRequestId(input.clientRequestId, record.id);
-  return { threadId: record.id, agentId: record.agentId, created: true };
+  return { threadId: record.id, agentId: record.agentId, created: true, behavior: "send" };
 }
 
 async function continueThread(
@@ -207,9 +202,8 @@ async function continueThread(
   }
 
   const busy = agent.status === "running";
-  if (busy && input.sendBehavior === "auto") {
-    throw new Error("侧聊正在回答中：可选择「打断并发」「追加引导」，或用 /btw-new 新开线程");
-  }
+  // 运行中不再报错：直接打断当前回答并发送。
+  const behavior = resolveSendBehavior(busy);
 
   const attachments: OutgoingTextAttachment[] = [];
   if (contextMode.passive) {
@@ -264,16 +258,13 @@ async function continueThread(
   const modeChanged = input.mode !== thread.mode;
   let messageText = input.question;
   if (modeChanged) {
-    const prompts = settings.language === "en" ? MODE_SWITCH_PROMPTS.en : MODE_SWITCH_PROMPTS.zh;
-    const directive = input.mode === "work" ? prompts.toWork : prompts.toAsk;
+    const directive = input.mode === "work" ? MODE_SWITCH_PROMPTS.toWork : MODE_SWITCH_PROMPTS.toAsk;
     messageText = `${directive}\n\n${input.question}`;
   }
 
   const sendOptions = {
     ...(attachments.length > 0 ? { attachments } : {}),
-    ...(busy
-      ? { activeTurnBehavior: input.sendBehavior === "steer" ? ("steer" as const) : ("interrupt" as const) }
-      : {}),
+    ...(behavior !== "send" ? { activeTurnBehavior: behavior } : {}),
   };
   await handle.send(messageText, sendOptions);
   registry.upsertThread({
@@ -283,9 +274,9 @@ async function continueThread(
     updatedAt: Date.now(),
   });
   console.log(
-    `[bytheway] thread ${thread.id} ${modeChanged ? `mode switched to ${input.mode}` : "continued"}`,
+    `[bytheway] thread ${thread.id} ${modeChanged ? `mode switched to ${input.mode}` : "continued"} (${behavior})`,
   );
-  return { threadId: thread.id, agentId: thread.agentId, created: false };
+  return { threadId: thread.id, agentId: thread.agentId, created: false, behavior };
 }
 
 interface CreateThreadInput {

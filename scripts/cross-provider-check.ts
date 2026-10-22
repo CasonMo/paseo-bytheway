@@ -61,7 +61,6 @@ async function main(): Promise<void> {
     mode: "ask",
     target: { kind: "new" },
     model: `${target.provider}/${model.id}`,
-    sendBehavior: "auto",
   });
   const handle = client.agents.ref(thread.agentId);
   const snap = await handle.refresh();

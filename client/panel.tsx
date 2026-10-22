@@ -9,14 +9,16 @@ import {
   threadsList,
   threadsRebuild,
   threadsRename,
+  updateCheck,
   type ThreadRuntimeStatus,
   type ThreadView,
 } from "../shared/contracts";
+import { PLUGIN_VERSION } from "../shared/meta";
 import { sidekickSettings } from "../shared/settings";
-import { FlatList, Icon, ScrollView, TextInput, useToast } from "./host-ui";
+import { copyText, FlatList, Icon, ScrollView, TextInput, useToast } from "./host-ui";
 import { OverlaySheet } from "./overlay";
-import { I18nProvider, localizeServerMessage, resolveLang, uiStrings } from "./i18n";
-import { applyUiLanguage, openSidekickSettings } from "./ui-registration";
+import { localizeServerMessage, useLocale, useT } from "./i18n";
+import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
 import { LiveItemView, PermissionBanner, TurnStatusLine } from "./transcript/items";
 
@@ -57,16 +59,33 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const cancelRpc = useRpc(threadsCancel);
   const rebuildRpc = useRpc(threadsRebuild);
   const renameRpc = useRpc(threadsRename);
+  const updateRpc = useRpc(updateCheck);
 
   const settingsState = useSettings(sidekickSettings);
   const defaultMode = settingsState.status === "ready" ? settingsState.values.defaultMode : "ask";
   const experimentalCancel = settingsState.status === "ready" ? settingsState.values.experimentalCancel : true;
-  const lang = resolveLang(settingsState.status === "ready" ? settingsState.values.language : "auto");
-  const t = uiStrings[lang];
+  const locale = useLocale();
+  const t = useT();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ latest: string; requiredPaseo: string | null } | null>(null);
 
   useEffect(() => {
-    applyUiLanguage(lang);
-  }, [lang]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await updateRpc({});
+        if (cancelled) return;
+        if (result.updateAvailable && result.latest) {
+          setUpdateInfo({ latest: result.latest, requiredPaseo: result.requiredPaseo });
+        }
+      } catch {
+        // 检查失败不打扰
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [updateRpc]);
 
   const mainAgent = useAgent(agentId, (value) => ({
     title: value.title,
@@ -109,10 +128,17 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     [threads, selectedId],
   );
 
+  /** 服务端权威的线程运行态（列表 RPC 轮询 + running 标记）。 */
+  const statusOf = (thread: ThreadView): ThreadRuntimeStatus =>
+    threadStatuses[thread.id] ?? (thread.state === "open" ? "idle" : "closed");
+  const agentRunning = selected ? statusOf(selected) === "running" : false;
+
   const streamAgentId = selected && selected.state === "open" ? selected.agentId : null;
   const stream = useThreadStream(streamAgentId);
   const turn = stream.state.turn;
   const busy = turn.status === "running";
+  /** 权威忙碌态：流状态与服务端列表任一为运行中即认为在跑。 */
+  const running = busy || agentRunning;
   const connection = stream.state.connection;
 
   // turn 结束后刷新一次，让状态圆点尽快更新
@@ -290,7 +316,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     Boolean(selected) && selected?.state === "open" && !modelChangedOtherProvider;
 
   // 底部提示：仅在有实际指导意义时显示（继续现有线程时不再显示"将发送到…"）
-  const hintText = busy
+  const hintText = running
     ? t.busyHint
     : selected && selected.state === "stopped"
       ? t.willRebuild
@@ -321,7 +347,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               model: modelOverride ?? undefined,
               continuationOf:
                 !willContinue && selected && selected.state === "open" ? selected.agentId : undefined,
-              sendBehavior: "auto",
               clientRequestId: newRequestId(),
             });
       setInput("");
@@ -329,12 +354,15 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       setShowJump(false);
       await refresh();
       setSelectedId(result.threadId);
+      if ("behavior" in result && result.behavior === "interrupt") {
+        toast.show(t.sentInterruptToast, { variant: "info" });
+      }
     } catch (error) {
       setSendError(messageOf(error));
     } finally {
       setSending(false);
     }
-  }, [input, sending, askRpc, rebuildRpc, agentId, mode, willContinue, selected, modelOverride, refresh]);
+  }, [input, sending, askRpc, rebuildRpc, agentId, mode, willContinue, selected, modelOverride, refresh, toast, t]);
 
   // 对齐 Paseo 主输入框：web 上 Enter 发送、Shift+Enter 换行（跳过 IME 组字）
   const onComposerKeyPress = useCallback(
@@ -417,7 +445,11 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   }, [renameTarget, renameText, renameRpc, toast, refresh, t]);
 
   const onRespondPermission = useCallback(
-    async (response: { behavior: "allow" | "deny"; selectedActionId?: string }) => {
+    async (response: {
+      behavior: "allow" | "deny";
+      selectedActionId?: string;
+      updatedInput?: Record<string, unknown>;
+    }) => {
       const pending = stream.state.permissions[0];
       if (!pending || responding) return;
       setResponding(true);
@@ -438,7 +470,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     () => ({
       root: { flex: 1, backgroundColor: theme.colors.surface0 },
       header: {
-        paddingHorizontal: compact ? 10 : 12,
+        paddingHorizontal: compact ? 12 : 14,
         paddingVertical: 6,
         gap: 6,
         borderBottomWidth: 1,
@@ -470,14 +502,14 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       },
       transcript: { flex: 1 },
       transcriptContent: {
-        paddingHorizontal: compact ? 10 : 14,
+        paddingHorizontal: compact ? 12 : 16,
         paddingVertical: 10,
         gap: compact ? 8 : 10,
       },
       composer: {
         borderTopWidth: 1,
         borderTopColor: theme.colors.border,
-        paddingHorizontal: compact ? 10 : 12,
+        paddingHorizontal: compact ? 12 : 14,
         paddingVertical: 8,
         gap: 6,
         backgroundColor: theme.colors.surface0,
@@ -523,7 +555,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         minWidth: 0,
       },
       composerAction: {
-        marginLeft: "auto" as const,
         flexShrink: 0,
       },
       primaryButton: {
@@ -567,9 +598,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     [theme, compact],
   );
 
-  const statusOf = (thread: ThreadView): ThreadRuntimeStatus =>
-    threadStatuses[thread.id] ?? (thread.state === "open" ? "idle" : "closed");
-
   const statusMetaOf = (status: ThreadRuntimeStatus): { color: string; label: string } => {
     switch (status) {
       case "running":
@@ -584,8 +612,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         return { color: theme.colors.foregroundMuted, label: t.statusStopped };
     }
   };
-
-  const agentRunning = selected ? statusOf(selected) === "running" : false;
 
   const connectionMeta = useMemo(() => {
     switch (connection) {
@@ -668,7 +694,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   /* ---------------- 渲染 ---------------- */
 
   return (
-    <I18nProvider lang={lang}>
       <View style={styles.root}>
       {/* Header */}
       <View style={styles.header}>
@@ -701,6 +726,41 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
             <Icon name="Plus" size={13} color={theme.colors.foreground} />
           </Pressable>
         </View>
+        {updateInfo && !updateDismissed ? (
+          <View
+            style={{
+              marginTop: 6,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: theme.colors.accent,
+              backgroundColor: theme.colors.surface2,
+              paddingHorizontal: 10,
+              paddingVertical: 8,
+              gap: 4,
+            }}
+          >
+            <Text style={{ color: theme.colors.foreground, fontSize: 12, fontWeight: "600" }}>
+              {t.updateBannerTitle}
+            </Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+              {t.updateBannerBody(
+                PLUGIN_VERSION,
+                updateInfo.latest,
+                updateInfo.requiredPaseo ?? "?",
+              )}
+            </Text>
+            <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10.5, fontFamily: "Menlo" }}>
+              paseo plugin update paseo-bytheway
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              style={{ alignSelf: "flex-end" }}
+              onPress={() => setUpdateDismissed(true)}
+            >
+              <Text style={{ color: theme.colors.accent, fontSize: 11 }}>{t.updateBannerDismiss}</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.headerRow}>
           {threads.length === 0 ? (
             <Text style={styles.muted}>{t.noThreads}</Text>
@@ -838,6 +898,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       {/* Permission banner */}
       {stream.state.permissions.length > 0 && streamAgentId ? (
         <PermissionBanner
+          key={stream.state.permissions[0].id}
           permission={stream.state.permissions[0]}
           theme={theme}
           compact={compact}
@@ -896,22 +957,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
             </Text>
             <Icon name="ChevronDown" size={11} color={theme.colors.foregroundMuted} />
           </Pressable>
-          {sending || !busy || !streamAgentId ? (
-            <Pressable
-              accessibilityRole="button"
-              style={[
-                styles.primaryButton,
-                styles.composerAction,
-                (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
-              ]}
-              onPress={() => void send()}
-              disabled={!input.trim() || sending}
-            >
-              <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
-                {sending ? t.sending : t.send}
-              </Text>
-            </Pressable>
-          ) : (
+          <View style={{ flex: 1, minWidth: 4 }} />
+          {running && streamAgentId ? (
             <Pressable
               accessibilityRole="button"
               style={[styles.stopButton, styles.composerAction]}
@@ -922,14 +969,28 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
                 {stopping ? t.stopping : t.stop}
               </Text>
             </Pressable>
-          )}
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            style={[
+              styles.primaryButton,
+              styles.composerAction,
+              (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
+            ]}
+            onPress={() => void send()}
+            disabled={!input.trim() || sending}
+          >
+            <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
+              {sending ? t.sending : t.send}
+            </Text>
+          </Pressable>
         </View>
         <View style={{ gap: 2 }}>
           {hintText ? <Text style={styles.muted}>{hintText}</Text> : null}
-          {sendError ? <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>{localizeServerMessage(sendError, lang)}</Text> : null}
+          {sendError ? <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>{localizeServerMessage(sendError, locale)}</Text> : null}
           {stopHint ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={{ color: theme.colors.statusWarning, fontSize: 11, flex: 1 }}>{localizeServerMessage(stopHint, lang)}</Text>
+              <Text style={{ color: theme.colors.statusWarning, fontSize: 11, flex: 1 }}>{localizeServerMessage(stopHint, locale)}</Text>
               {selected ? (
                 <Pressable accessibilityRole="button" onPress={() => navigation?.openAgent({ agentId: selected.agentId })}>
                   <Text style={{ color: theme.colors.accent, fontSize: 11 }}>{t.openTab}</Text>
@@ -988,6 +1049,22 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               {thread.id === selectedId ? (
                 <Text style={{ color: theme.colors.accent, fontSize: 10.5 }}>{t.currentBadge}</Text>
               ) : null}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  void (async () => {
+                    try {
+                      await copyText(thread.agentId);
+                      toast.show(t.copied, { variant: "success" });
+                    } catch {
+                      toast.error(t.copyFailed);
+                    }
+                  })();
+                }}
+                hitSlop={8}
+              >
+                <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{t.copyId}</Text>
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => {
@@ -1111,6 +1188,5 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         </View>
       </OverlaySheet>
       </View>
-    </I18nProvider>
   );
 }

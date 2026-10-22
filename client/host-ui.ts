@@ -2,6 +2,7 @@
 export {
   Modal,
   Icon,
+  Markdown,
   useToast,
   copyText,
   FlatList,

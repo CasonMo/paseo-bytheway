@@ -25,14 +25,21 @@ Each side thread is backed by a temporary agent in the same workspace:
 - `/side <task>` and `/side-new <task>` are the same in Build mode (tasks allowed);
 - `/fork [prompt]` clones the current session transcript into a new parallel agent;
 - The Command Center can open the ByTheWay panel and its settings;
+- The threads dropdown can copy a thread's agent id to the clipboard (for handing the
+  agent to another tool);
 - On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
-  (same as the main Paseo composer).
+  (same as the main Paseo composer);
+- While a side chat is still answering you can keep sending: the send interrupts the running
+  answer and starts a fresh turn with the new message (Enter and the Send button behave the
+  same);
+- Assistant text uses the host Markdown renderer; the UI language follows the Paseo app language;
+- The panel shows a banner when a newer plugin version is available on GitHub main, including
+  the required Paseo version (apply with `paseo plugin update paseo-bytheway` in a terminal).
 
 ## Settings
 
 Settings → Plugins → ByTheWay 侧聊:
 
-- Interface language (auto / Chinese / English)
 - Default mode (Chat / Build) and default model (follow the main session or fixed provider/model)
 - New threads can pick any provider; existing threads switch models in place within their own provider only
 - First-turn snapshot depth, action digest, context fallback
@@ -54,9 +61,14 @@ and the interface works on desktop, web, and mobile clients.
 - Network: remote images in side-chat messages load directly from their HTTP(S) URLs on
   the client, so the image host receives that request and the client's network address.
   Side-chat questions, context snapshots, and tool results are sent to the model provider
-  you configured in Paseo, exactly like a normal Paseo session;
+  you configured in Paseo, exactly like a normal Paseo session. When the panel opens, the
+  plugin fetches `package.json` / `paseo-plugin.json` from this repository's main branch on
+  `raw.githubusercontent.com` to check for updates (version metadata only; no session data
+  is uploaded).
 - Permissions: tool permission requests from side agents appear inline in the panel for
-  approval or denial; unanswered requests are auto-denied after the configured tiered
+  approval or denial; question-type requests render as a step-by-step form (one question
+  per screen, single-select advances automatically, all answers submitted once at the
+  last step); unanswered requests are auto-denied after the configured tiered
   timeout;
 - Stop: cancellation is requested through Paseo's tools first; if it does not take
   effect, the panel points to the native tab to stop the agent there.

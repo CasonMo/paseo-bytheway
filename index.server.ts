@@ -10,6 +10,7 @@ import {
   threadsRemove,
   threadsRename,
   threadsSendToMain,
+  updateCheck,
 } from "./shared/contracts";
 import { sidekickSettings, type SidekickSettings } from "./shared/settings";
 import { toThreadView } from "./shared/types";
@@ -28,6 +29,7 @@ import {
   pinThread,
   sendToMain,
 } from "./server/threads";
+import { checkUpdate } from "./server/update";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(sidekickSettings);
@@ -125,6 +127,8 @@ export default function contribute(server: PluginServerContext) {
       question: input.question,
     });
   });
+
+  server.handle(updateCheck, async () => checkUpdate());
 
   return () => {
     disposePermissionHooks();

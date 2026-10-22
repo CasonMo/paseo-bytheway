@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { copyText, Icon, useToast } from "../host-ui";
+import { copyText, Icon, Markdown, TextInput, useToast } from "../host-ui";
 import { useT, type UIStrings } from "../i18n";
 import type {
   AssistantItem,
@@ -16,7 +16,6 @@ import type {
   TurnInfo,
   UserItem,
 } from "../live/types";
-import { MarkdownText } from "./markdown";
 
 /* ------------------------------------------------------------------ */
 /* 工具函数                                                             */
@@ -72,16 +71,11 @@ export const AssistantItemView = memo(function AssistantItemView({
   theme: PluginTheme;
   compact: boolean;
 }) {
-  // Paseo 0.13 起宿主不再导出 useRevealedText；流式节流即可
+  // Paseo 0.13 起宿主不再导出 useRevealedText；流式节流 + 宿主 Markdown
   const throttled = useThrottledValue(item.text);
   return (
     <View style={{ alignSelf: "stretch" }}>
-      <MarkdownText
-        text={throttled}
-        theme={theme}
-        compact={compact}
-        streaming={item.phase === "streaming"}
-      />
+      <Markdown>{throttled}</Markdown>
       {item.phase === "streaming" ? (
         <Text style={{ color: theme.colors.accent, fontSize: 12, marginTop: 2 }}>▍</Text>
       ) : null}
@@ -489,6 +483,234 @@ export function TurnStatusLine({
 /* 权限横幅                                                             */
 /* ------------------------------------------------------------------ */
 
+type PermissionRespond = (response: {
+  behavior: "allow" | "deny";
+  selectedActionId?: string;
+  updatedInput?: Record<string, unknown>;
+}) => void;
+
+interface QuestionLike {
+  question: string;
+  header: string;
+  options?: { label: string; description?: string }[];
+  multiSelect?: boolean;
+  allowOther?: boolean;
+}
+
+function readQuestions(input: unknown): QuestionLike[] {
+  if (!input || typeof input !== "object") return [];
+  const list = (input as { questions?: unknown }).questions;
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (entry): entry is QuestionLike =>
+      !!entry &&
+      typeof entry === "object" &&
+      typeof (entry as QuestionLike).question === "string" &&
+      typeof (entry as QuestionLike).header === "string",
+  );
+}
+
+/** OpenCode question 类请求：渲染为问题选项面板，提交 answers 而非简单 allow。 */
+function QuestionForm({
+  permission,
+  theme,
+  compact,
+  responding,
+  onRespond,
+}: {
+  permission: PendingPermission;
+  theme: PluginTheme;
+  compact: boolean;
+  responding: boolean;
+  onRespond: PermissionRespond;
+}) {
+  const t = useT();
+  const questions = useMemo(
+    () => readQuestions(permission.request.input),
+    [permission.request.input],
+  );
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [others, setOthers] = useState<Record<string, string>>({});
+  const [step, setStep] = useState(0);
+
+  const total = questions.length;
+  const index = Math.min(step, Math.max(total - 1, 0));
+  const q = questions[index];
+  const isLast = index >= total - 1;
+
+  /** 单选点选后自动进入下一题；多选/「其他」输入后手动下一步。 */
+  const pick = (question: QuestionLike, label: string) => {
+    setSelected((prev) => {
+      const current = prev[question.header] ?? [];
+      if (question.multiSelect) {
+        return {
+          ...prev,
+          [question.header]: current.includes(label)
+            ? current.filter((value) => value !== label)
+            : [...current, label],
+        };
+      }
+      return { ...prev, [question.header]: [label] };
+    });
+    if (!question.multiSelect && !isLast && !responding) {
+      setStep(index + 1);
+    }
+  };
+
+  const hasValue = questions.some(
+    (question) =>
+      (selected[question.header]?.length ?? 0) > 0 ||
+      (others[question.header] ?? "").trim().length > 0,
+  );
+
+  const submit = () => {
+    const answers: Record<string, string> = {};
+    for (const question of questions) {
+      const values = [...(selected[question.header] ?? [])];
+      const other = (others[question.header] ?? "").trim();
+      if (other) values.push(other);
+      answers[question.header] = values.join(",");
+    }
+    onRespond({ behavior: "allow", updatedInput: { answers } });
+  };
+
+  if (!q) return null;
+
+  const navButton = (label: string, onPress: () => void, primary: boolean, disabled: boolean) => (
+    <Pressable
+      key={label}
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={{
+        borderRadius: 7,
+        borderWidth: 1,
+        borderColor: primary ? theme.colors.accent : theme.colors.border,
+        backgroundColor: primary ? theme.colors.accent : "transparent",
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <Text
+        style={{
+          color: primary ? theme.colors.accentForeground : theme.colors.foreground,
+          fontSize: 11.5,
+          fontWeight: "600",
+        }}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        paddingHorizontal: compact ? 10 : 12,
+        paddingVertical: 8,
+        gap: 8,
+      }}
+    >
+      {total > 1 ? (
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+          {index + 1} / {total}
+        </Text>
+      ) : null}
+      <View style={{ gap: 6 }}>
+        <Text style={{ color: theme.colors.foreground, fontSize: compact ? 12 : 12.5 }}>
+          {q.question}
+        </Text>
+        {(q.options ?? []).map((option) => {
+          const checked = (selected[q.header] ?? []).includes(option.label);
+          return (
+            <Pressable
+              key={option.label}
+              accessibilityRole="button"
+              disabled={responding}
+              onPress={() => pick(q, option.label)}
+              style={{
+                flexDirection: "row",
+                alignItems: "flex-start",
+                gap: 8,
+                paddingVertical: 3,
+                opacity: responding ? 0.5 : 1,
+              }}
+            >
+              <View
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: q.multiSelect ? 3 : 7,
+                  borderWidth: 1.5,
+                  borderColor: checked ? theme.colors.accent : theme.colors.foregroundMuted,
+                  backgroundColor: checked ? theme.colors.accent : "transparent",
+                  marginTop: 2,
+                }}
+              />
+              <View style={{ flex: 1, gap: 1 }}>
+                <Text style={{ color: theme.colors.foreground, fontSize: compact ? 11.5 : 12 }}>
+                  {option.label}
+                </Text>
+                {option.description ? (
+                  <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+                    {option.description}
+                  </Text>
+                ) : null}
+              </View>
+            </Pressable>
+          );
+        })}
+        {q.allowOther ? (
+          <TextInput
+            style={{
+              borderRadius: 7,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surface2 ?? theme.colors.surface1,
+              color: theme.colors.foreground,
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              fontSize: 11.5,
+            }}
+            placeholder={t.questionOther}
+            placeholderTextColor={theme.colors.foregroundMuted}
+            editable={!responding}
+            value={others[q.header] ?? ""}
+            onChangeText={(value) => setOthers((prev) => ({ ...prev, [q.header]: value }))}
+          />
+        ) : null}
+      </View>
+      <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+        {index > 0 ? navButton(t.questionPrev, () => setStep(index - 1), false, responding) : null}
+        {!isLast ? navButton(t.questionNext, () => setStep(index + 1), false, responding) : null}
+        {isLast ? navButton(t.questionSubmit, submit, true, responding || !hasValue) : null}
+        <View style={{ flex: 1 }} />
+        <Pressable
+          accessibilityRole="button"
+          disabled={responding}
+          onPress={() => onRespond({ behavior: "deny" })}
+          style={{
+            borderRadius: 7,
+            borderWidth: 1,
+            borderColor: theme.colors.statusDanger,
+            paddingHorizontal: 12,
+            paddingVertical: 5,
+            opacity: responding ? 0.5 : 1,
+          }}
+        >
+          <Text style={{ color: theme.colors.statusDanger, fontSize: 11.5, fontWeight: "600" }}>
+            {t.questionClose}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 export function PermissionBanner({
   permission,
   theme,
@@ -500,10 +722,23 @@ export function PermissionBanner({
   theme: PluginTheme;
   compact: boolean;
   responding: boolean;
-  onRespond: (response: { behavior: "allow" | "deny"; selectedActionId?: string }) => void;
+  onRespond: PermissionRespond;
 }) {
   const t = useT();
   const request = permission.request;
+
+  if (request.kind === "question" && readQuestions(request.input).length > 0) {
+    return (
+      <QuestionForm
+        permission={permission}
+        theme={theme}
+        compact={compact}
+        responding={responding}
+        onRespond={onRespond}
+      />
+    );
+  }
+
   const detail = request.detail ?? {};
   const detailType = String((detail as { type?: unknown }).type ?? "");
   const detailLine =

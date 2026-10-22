@@ -60,7 +60,6 @@ async function main(): Promise<void> {
     question: "请记住这个暗号：蓝色河马。只回复：已记住",
     mode: "ask",
     target: { kind: "new" },
-    sendBehavior: "auto",
   });
   const a1 = client.agents.ref(first.agentId);
   await waitAnswer(a1, 0, 120_000);
@@ -72,7 +71,6 @@ async function main(): Promise<void> {
     mode: "ask",
     target: { kind: "new" },
     continuationOf: first.agentId,
-    sendBehavior: "auto",
   });
   console.log("[2] continuation agent:", second.agentId, "newThread:", second.agentId !== first.agentId);
   const a2 = client.agents.ref(second.agentId);

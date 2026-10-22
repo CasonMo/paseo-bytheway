@@ -61,7 +61,6 @@ async function main(): Promise<void> {
     question: "请只回复：a",
     mode: "ask",
     target: { kind: "new" },
-    sendBehavior: "auto",
   });
   const handle = client.agents.ref(first.agentId);
   await waitAnswer(handle, 0, 120_000);
@@ -72,7 +71,6 @@ async function main(): Promise<void> {
     question: "请只回复：b",
     mode: "work",
     target: { kind: "continue", threadId: first.threadId },
-    sendBehavior: "auto",
   });
   const sameThread = switched.threadId === first.threadId && !switched.created;
   const registryMode = getThread(first.threadId)?.mode;

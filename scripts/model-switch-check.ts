@@ -61,7 +61,6 @@ async function main(): Promise<void> {
     mode: "ask",
     target: { kind: "new" },
     model: `codex/${modelA.id}`,
-    sendBehavior: "auto",
   });
   const handle = client.agents.ref(thread.agentId);
   await waitAnswer(handle, 0, 120_000);
@@ -73,7 +72,6 @@ async function main(): Promise<void> {
     mode: "ask",
     target: { kind: "continue", threadId: thread.threadId },
     model: `codex/${modelB.id}`,
-    sendBehavior: "auto",
   });
   const sameThread = switched.threadId === thread.threadId && !switched.created;
   const snap = await handle.refresh();
@@ -91,7 +89,6 @@ async function main(): Promise<void> {
       mode: "ask",
       target: { kind: "continue", threadId: thread.threadId },
       model: "claude/claude-opus-5",
-      sendBehavior: "auto",
     });
   } catch (error) {
     rejected = error instanceof Error ? error.message : String(error);

@@ -76,13 +76,14 @@ export const threadsAsk = defineRpc({
     thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
     /** 换模型/模式新开线程时：接续的旧线程 agent id（新线程会读取其上下文）。 */
     continuationOf: z.string().min(1).optional(),
-    sendBehavior: z.enum(["auto", "interrupt", "steer"]).default("auto"),
     clientRequestId: z.string().min(1).max(200).optional(),
   }),
   output: z.object({
     threadId: z.string(),
     agentId: z.string(),
     created: z.boolean(),
+    /** 实际生效的发送方式：send=普通发送，interrupt=打断了运行中的回答。 */
+    behavior: z.enum(["send", "interrupt"]),
   }),
 });
 
@@ -153,6 +154,18 @@ export const contextPreview = defineRpc({
     systemPrompt: z.string(),
     messageText: z.string(),
     attachments: z.array(textAttachmentSchema),
+  }),
+});
+
+/** 检查 GitHub main 上是否比当前安装版本更新（仅展示横幅，不做一键升级）。 */
+export const updateCheck = defineRpc({
+  name: "bytheway.update.check",
+  input: z.object({}),
+  output: z.object({
+    updateAvailable: z.boolean(),
+    current: z.string(),
+    latest: z.string().nullable(),
+    requiredPaseo: z.string().nullable(),
   }),
 });
 

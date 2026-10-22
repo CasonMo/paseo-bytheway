@@ -94,7 +94,6 @@ async function main(): Promise<void> {
       question: "请只回复这五个字符：smoke1",
       mode: "ask",
       target: { kind: "new" },
-      sendBehavior: "auto",
     });
     threadId = first.threadId;
     console.log(`[1] created thread ${first.threadId} agent ${first.agentId} created=${first.created}`);
@@ -119,7 +118,6 @@ async function main(): Promise<void> {
       question: "请只回复这五个字符：smoke2",
       mode: "ask",
       target: { kind: "continue" },
-      sendBehavior: "auto",
     });
     if (second.created) fail("续聊应返回 created=false");
     if (second.threadId !== first.threadId) fail("续聊应复用同一线程");
@@ -137,7 +135,6 @@ async function main(): Promise<void> {
         question: "不应发出",
         mode: "ask",
         target: { kind: "continue", threadId: first.threadId },
-        sendBehavior: "auto",
       });
     } catch (error) {
       stoppedError = error instanceof Error ? error.message : String(error);

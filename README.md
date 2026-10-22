@@ -9,10 +9,11 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 - **线程化**：`/btw` 续聊、`/btw-new` 新开；`/side` / `/side-new` 为 Build（干活）模式；`/fork` 克隆当前会话。
 - **上下文**：默认「agent 直连」——侧聊通过 Paseo 内置工具按需读取主会话最新进展；首轮附轻量快照；工具不可用时自动降级为被动增量同步。
 - **转录零落盘**：Paseo agent 转录是唯一数据源；插件只持久化线程注册表（`~/.paseo/plugin-data/paseo-bytheway/`）。
-- **权限内联处理**：面板内批准/拒绝；支持策略（询问 / 自动放行只读 / 全部拒绝）与分级超时自动拒绝。
+- **权限内联处理**：面板内批准/拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后统一提交）；支持策略（询问 / 自动放行只读 / 全部拒绝）与分级超时自动拒绝。
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
+- **运行中发送**：侧聊正在回答时仍可直接发送——会打断当前回答，按新消息重新开始一轮（Enter 与「发送」按钮行为一致）。
 - **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。
-- **体验**：AI 线程标题（可配置标题模型）、手动重命名、状态圆点、Tab 线程切换、强制贴底滚动、中英双语界面；桌面端输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
+- **体验**：AI 线程标题（可配置标题模型）、手动重命名、线程列表一键复制 Agent ID、状态圆点、Tab 线程切换、强制贴底滚动、界面语言跟随 Paseo App、宿主 Markdown 正文、更新横幅；桌面端输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
 
 ## 命令
 
@@ -31,8 +32,9 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 ```bash
 npm install
 npm run typecheck   # TypeScript
-npm test            # vitest（reducer / 转换逻辑）
+npm test            # vitest（reducer / 转换逻辑 / 发送行为）
 npm run smoke       # 端到端：直连本地 daemon（需 PASEO_PASSWORD 或 ~/.paseo/local-credential）
+npm run busy-behavior-check  # 运行中发送：busy→interrupt 当前轮并 toast 提示（需本地 daemon）
 
 paseo plugin install /path/to/paseo-bytheway
 paseo plugin reload paseo-bytheway

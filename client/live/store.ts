@@ -84,6 +84,7 @@ export interface PermissionResponseLike {
   selectedActionId?: string;
   message?: string;
   interrupt?: boolean;
+  updatedInput?: Record<string, unknown>;
 }
 
 export interface ThreadStreamControls {
@@ -236,6 +237,37 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
     };
   }, [agentId, paseo]);
 
+  // 权限解决只走独立的 agent_permission_resolved 消息，不进 agent_stream，
+  // timeline 订阅收不到，需单独订阅才能被动清除横幅。
+  useEffect(() => {
+    if (!agentId) return;
+    const observation = paseo.observeEvents(["agent_permission_resolved"]);
+    const unsubscribe = observation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type !== "agent_permission_resolved") return;
+        const payload = message.payload;
+        if (payload.agentId !== agentId) return;
+        dispatch({
+          type: "stream",
+          payload: {
+            agentId,
+            event: {
+              type: "permission_resolved",
+              provider: "",
+              requestId: payload.requestId,
+              resolution: payload.resolution,
+            },
+          } as unknown as StreamPayload,
+        });
+      },
+    });
+    return () => {
+      unsubscribe();
+      void observation.release().catch(() => {});
+    };
+  }, [paseo, agentId]);
+
   const respondPermission = useCallback(
     async (requestId: string, response: PermissionResponseLike) => {
       if (!agentId) return;
@@ -243,8 +275,17 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
         requestId,
         response: response as Parameters<ReturnType<PaseoApi["agents"]["ref"]>["respondToPermission"]>[0]["response"],
       });
+      // daemon 只通过独立的 agent_permission_resolved 消息通知，不进 agent_stream，
+      // timeline 订阅收不到，本地立即清除。
+      dispatch({
+        type: "stream",
+        payload: {
+          agentId,
+          event: { type: "permission_resolved", provider: "", requestId, resolution: response },
+        } as unknown as StreamPayload,
+      });
     },
-    [paseo, agentId],
+    [paseo, agentId, dispatch],
   );
 
   return { state, refetch, respondPermission };

@@ -36,7 +36,6 @@ async function main(): Promise<void> {
     question: "帮我评估一下把侧聊线程的标题改成 AI 自动生成的方案有什么利弊？",
     mode: "ask",
     target: { kind: "new" },
-    sendBehavior: "auto",
   });
   const initial = getThread(result.threadId)?.title ?? "";
   console.log("thread:", result.threadId);

@@ -7,8 +7,6 @@ export const sidekickSettings = defineSettings({
   scope: "host",
   version: 1,
   schema: z.object({
-    language: z.enum(["auto", "zh", "en"]).default("auto"),
-
     // 新线程默认
     defaultMode: z.enum(["ask", "work"]).default("ask"),
     defaultModel: z.string().default("follow"),
