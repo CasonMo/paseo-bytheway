@@ -4,12 +4,9 @@ export {
   Icon,
   useToast,
   copyText,
-  useRevealedText,
   FlatList,
   ScrollView,
   TextInput,
-} from "@getpaseo/plugin/client/react-native";
-export {
   SettingsAction,
   SettingsInput,
   SettingsSection,

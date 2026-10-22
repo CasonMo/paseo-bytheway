@@ -1,7 +1,7 @@
 import type { PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { useAgent, usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import {
   threadsArchive,
   threadsAsk,
@@ -336,6 +336,22 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     }
   }, [input, sending, askRpc, rebuildRpc, agentId, mode, willContinue, selected, modelOverride, refresh]);
 
+  // 对齐 Paseo 主输入框：web 上 Enter 发送、Shift+Enter 换行（跳过 IME 组字）
+  const onComposerKeyPress = useCallback(
+    (event: { nativeEvent: { key: string }; preventDefault?: () => void }) => {
+      const native = event.nativeEvent as typeof event.nativeEvent & {
+        shiftKey?: boolean;
+        isComposing?: boolean;
+        keyCode?: number;
+      };
+      if (native.isComposing || native.keyCode === 229) return;
+      if (native.key !== "Enter" || native.shiftKey) return;
+      event.preventDefault?.();
+      void send();
+    },
+    [send],
+  );
+
   const stop = useCallback(async () => {
     if (!selected || stopping) return;
     setStopping(true);
@@ -487,6 +503,28 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         borderColor: theme.colors.border,
         paddingHorizontal: 8,
         paddingVertical: 4,
+        flexShrink: 0,
+      },
+      composerRow: {
+        flexDirection: "row" as const,
+        flexWrap: "wrap" as const,
+        alignItems: "center" as const,
+        gap: 6,
+      },
+      modelChip: {
+        flexShrink: 1,
+        minWidth: 0,
+        maxWidth: 200,
+      },
+      modelChipText: {
+        color: theme.colors.foregroundMuted,
+        fontSize: 11,
+        flexShrink: 1,
+        minWidth: 0,
+      },
+      composerAction: {
+        marginLeft: "auto" as const,
+        flexShrink: 0,
       },
       primaryButton: {
         borderRadius: 8,
@@ -817,8 +855,9 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           placeholderTextColor={theme.colors.foregroundMuted}
           value={input}
           onChangeText={setInput}
+          onKeyPress={Platform.OS === "web" ? onComposerKeyPress : undefined}
         />
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View style={styles.composerRow}>
           <Pressable
             accessibilityRole="button"
             style={[styles.chip, mode === "ask" ? { borderColor: theme.colors.accent } : null]}
@@ -839,7 +878,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            style={styles.chip}
+            style={[styles.chip, styles.modelChip]}
             onPress={() => {
               const preferred =
                 (providerLocked ? lockedProvider : null) ??
@@ -852,27 +891,35 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               setModelModalOpen(true);
             }}
           >
-            <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, fontSize: 11, maxWidth: 180 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.modelChipText}>
               {currentModelLabel}
             </Text>
             <Icon name="ChevronDown" size={11} color={theme.colors.foregroundMuted} />
           </Pressable>
-          <View style={{ flex: 1 }} />
-          {busy && streamAgentId ? (
-            <Pressable accessibilityRole="button" style={styles.stopButton} onPress={() => void stop()} disabled={stopping}>
-              <Text style={{ color: theme.colors.statusDanger, fontSize: 12, fontWeight: "600" }}>
-                {stopping ? t.stopping : t.stop}
-              </Text>
-            </Pressable>
-          ) : (
+          {sending || !busy || !streamAgentId ? (
             <Pressable
               accessibilityRole="button"
-              style={[styles.primaryButton, (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 }]}
+              style={[
+                styles.primaryButton,
+                styles.composerAction,
+                (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
+              ]}
               onPress={() => void send()}
               disabled={!input.trim() || sending}
             >
               <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
                 {sending ? t.sending : t.send}
+              </Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              style={[styles.stopButton, styles.composerAction]}
+              onPress={() => void stop()}
+              disabled={stopping}
+            >
+              <Text style={{ color: theme.colors.statusDanger, fontSize: 12, fontWeight: "600" }}>
+                {stopping ? t.stopping : t.stop}
               </Text>
             </Pressable>
           )}

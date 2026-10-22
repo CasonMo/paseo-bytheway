@@ -1,6 +1,6 @@
 {
   "name": "paseo-bytheway",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
@@ -25,16 +25,16 @@
     "model-switch-check": "tsx scripts/model-switch-check.ts"
   },
   "devDependencies": {
-    "@getpaseo/plugin": "0.12.0",
+    "@getpaseo/plugin": "0.13.0-beta.1",
     "@tanstack/react-query": "^5.90.11",
     "@types/node": "^24.0.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.6",
-    "zod": "^4.4.3",
-    "tsx": "^4.19.0"
+    "zod": "^4.4.3"
   },
   "description": "ByTheWay 侧聊：Paseo agent 会话的旁路侧聊——实时执行流、线程化、agent 直连上下文（中英双语界面）/ Side chats for Paseo sessions: live execution stream, threads, agent-linked context",
   "license": "MIT",

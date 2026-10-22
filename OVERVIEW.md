@@ -24,7 +24,9 @@ Each side thread is backed by a temporary agent in the same workspace:
   opens the panel without creating anything; `/btw-new <question>` starts a new one;
 - `/side <task>` and `/side-new <task>` are the same in Build mode (tasks allowed);
 - `/fork [prompt]` clones the current session transcript into a new parallel agent;
-- The Command Center can open the ByTheWay panel and its settings.
+- The Command Center can open the ByTheWay panel and its settings;
+- On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
+  (same as the main Paseo composer).
 
 ## Settings
 
@@ -40,7 +42,7 @@ Settings → Plugins → ByTheWay 侧聊:
 - Concurrency limits (Chat / Build / total) and the experimental cancel switch
 
 No account or extra keys are required; the plugin reuses the agent providers configured
-in Paseo. Requires Paseo 0.12.0 or later. The daemon runs on any platform Paseo supports,
+in Paseo. Requires Paseo 0.13.0-beta.1 or later. The daemon runs on any platform Paseo supports,
 and the interface works on desktop, web, and mobile clients.
 
 ## Data and permissions

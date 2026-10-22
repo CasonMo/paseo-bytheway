@@ -16,7 +16,8 @@
 - `/btw <问题>`：继续当前侧聊线程（没有则新开）；不带问题时只打开面板、不创建线程；`/btw-new <问题>`：新开一条；
 - `/side <任务>` 与 `/side-new <任务>`：Build 模式（可执行任务），语义相同；
 - `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
-- Command Center 可打开「ByTheWay 侧聊」面板与设置页。
+- Command Center 可打开「ByTheWay 侧聊」面板与设置页；
+- 桌面端底部输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
 
 ## 设置
 
@@ -31,7 +32,7 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 - 权限策略（询问 / 自动放行只读 / 全部拒绝）与只读、写类权限的超时自动拒绝时间
 - 并发上限（Chat / Build / 总计）与实验性取消开关
 
-无需账号或额外密钥：插件复用 Paseo 已配置的 agent provider。要求 Paseo 0.12.0 或更高版本；daemon 可运行在 Paseo 支持的任意平台，界面在桌面、Web 与移动端可用。
+无需账号或额外密钥：插件复用 Paseo 已配置的 agent provider。要求 Paseo 0.13.0-beta.1 或更高版本；daemon 可运行在 Paseo 支持的任意平台，界面在桌面、Web 与移动端可用。
 
 ## 数据与权限
 

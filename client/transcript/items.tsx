@@ -1,7 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { copyText, Icon, useRevealedText, useToast } from "../host-ui";
+import { copyText, Icon, useToast } from "../host-ui";
 import { useT, type UIStrings } from "../i18n";
 import type {
   AssistantItem,
@@ -72,8 +72,8 @@ export const AssistantItemView = memo(function AssistantItemView({
   theme: PluginTheme;
   compact: boolean;
 }) {
-  const revealed = useRevealedText(item.text, item.phase);
-  const throttled = useThrottledValue(revealed);
+  // Paseo 0.13 起宿主不再导出 useRevealedText；流式节流即可
+  const throttled = useThrottledValue(item.text);
   return (
     <View style={{ alignSelf: "stretch" }}>
       <MarkdownText
