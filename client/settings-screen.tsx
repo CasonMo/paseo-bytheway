@@ -179,6 +179,7 @@ export function SidekickSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           label={t("set.permPolicy")}
           value={values.permissionPolicy}
           options={[
+            { label: t("set.permFollow"), value: "follow" },
             { label: t("set.permAsk"), value: "ask" },
             { label: t("set.permReadOnly"), value: "allow-readonly" },
             { label: t("set.permDeny"), value: "deny-all" },

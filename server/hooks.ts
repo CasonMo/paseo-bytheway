@@ -11,7 +11,8 @@ function permissionKind(request: { detail?: unknown; kind?: string }): "read" | 
 
 /**
  * 侧聊 agent 的权限策略与超时兜底（仅对本插件的线程生效）：
- * - ask（默认）：等待用户在面板处理；超时后自动拒绝（只读/写分别计时）
+ * - follow（默认）：不接管，完全交给 Paseo 原生处理（与主会话一致）
+ * - ask：等待用户在面板处理；超时后自动拒绝（只读/写分别计时）
  * - allow-readonly：只读类请求自动放行，写类走超时
  * - deny-all：立即拒绝
  */
@@ -25,6 +26,8 @@ export function registerPermissionAutoHandlers(
       if (!findThreadByAgentId(agentId)) return; // 只处理本插件的侧聊 agent
 
       const settings = await readSettings();
+      if (settings.permissionPolicy === "follow") return;
+
       const kind = permissionKind(event.request);
       const ref = paseo.agents.ref(agentId);
 

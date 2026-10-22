@@ -8,7 +8,9 @@ import {
   buildSnapshotText,
   buildSystemPrompt,
   detectToolsAvailable,
+  featuresToValues,
   fetchTranscriptTail,
+  pickBuildMode,
   pickReadOnlyMode,
   PASSIVE_SNAPSHOT_BUDGET,
   PASSIVE_SNAPSHOT_MESSAGES,
@@ -152,6 +154,14 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
 
   const contextMode = await resolveContextMode(paseo, settings);
 
+  // 跟随主会话：同 provider 且同模型时继承思考档，同 provider 时继承 provider features（如 opencode auto_accept）
+  const inheritedThinkingOptionId =
+    input.thinkingOptionId ??
+    (provider === main.provider && model === (main.model ?? "")
+      ? main.effectiveThinkingOptionId ?? main.thinkingOptionId ?? null
+      : null);
+  const inheritedFeatureValues = provider === main.provider ? featuresToValues(main.features) : {};
+
   if (input.target.kind === "continue") {
     const thread = input.target.threadId
       ? registry.getThread(input.target.threadId)
@@ -171,8 +181,8 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
     provider,
     model,
     mode: input.mode,
-    thinkingOptionId: input.thinkingOptionId ?? null,
-    mainModeId: main.currentModeId ?? null,
+    thinkingOptionId: inheritedThinkingOptionId,
+    featureValues: inheritedFeatureValues,
     question: input.question,
     contextMode,
     seedFromAgentId: input.continuationOf ?? null,
@@ -254,10 +264,21 @@ async function continueThread(
     }
   }
 
-  // 就地模式切换：聊天/干活切换不再新开线程，改为随消息携带切换指令并更新线程模式
+  // 就地模式切换：先真正切换 agent 的 modeId，再随消息附上切换指令并更新线程模式
   const modeChanged = input.mode !== thread.mode;
   let messageText = input.question;
   if (modeChanged) {
+    const targetModeId =
+      input.mode === "ask"
+        ? await pickReadOnlyMode(paseo, thread.provider)
+        : await pickBuildMode(paseo, thread.provider);
+    if (targetModeId) {
+      const switched = await switchThreadMode(paseo, thread, targetModeId);
+      if (!switched.ok) {
+        throw new Error(`模式切换失败：${switched.error ?? "未知原因"}`);
+      }
+      console.log(`[bytheway] thread ${thread.id} agent mode switched to ${targetModeId}`);
+    }
     const directive = input.mode === "work" ? MODE_SWITCH_PROMPTS.toWork : MODE_SWITCH_PROMPTS.toAsk;
     messageText = `${directive}\n\n${input.question}`;
   }
@@ -286,7 +307,8 @@ interface CreateThreadInput {
   model: string;
   mode: ThreadMode;
   thinkingOptionId: string | null;
-  mainModeId: string | null;
+  /** 从主会话继承的 provider features（如 opencode auto_accept）。 */
+  featureValues: Record<string, unknown>;
   question: string;
   contextMode: ContextModeInfo;
   seedFromAgentId: string | null;
@@ -299,7 +321,9 @@ async function createThread(
 ): Promise<ThreadRecord> {
   const threadId = registry.newThreadId();
   const modeId =
-    input.mode === "ask" ? await pickReadOnlyMode(paseo, input.provider) : input.mainModeId ?? undefined;
+    input.mode === "ask"
+      ? await pickReadOnlyMode(paseo, input.provider)
+      : await pickBuildMode(paseo, input.provider);
   const systemPrompt = buildSystemPrompt({
     mainAgentId: input.mainAgentId,
     mode: input.mode,
@@ -371,6 +395,7 @@ async function createThread(
       provider: input.model ? `${input.provider}/${input.model}` : input.provider,
       ...(modeId ? { modeId } : {}),
       ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
+      ...(Object.keys(input.featureValues).length > 0 ? { featureValues: input.featureValues } : {}),
       systemPrompt,
     },
     title,
@@ -427,6 +452,37 @@ async function switchThreadModel(
       const snapshot = await paseo.agents.ref(thread.agentId).refresh();
       if (snapshot?.agent.model === modelId) return { ok: true };
       return { ok: false, error: `切换未生效（当前仍是 ${snapshot?.agent.model ?? "未知"}）` };
+    } finally {
+      void helper.archive().catch(() => {});
+    }
+  } catch (error) {
+    return { ok: false, error: message(error) };
+  }
+}
+
+/** 通过辅助 agent 调用 MCP set_agent_mode，把线程 agent 的模式原地切换到目标 modeId。 */
+async function switchThreadMode(
+  paseo: PaseoApi,
+  thread: ThreadRecord,
+  modeId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const helper = await paseo.workspaces.ref(thread.workspaceId).agents.create({
+      config: { provider: thread.model ? `${thread.provider}/${thread.model}` : thread.provider },
+      title: "[侧聊·切换模式]",
+      labels: { sidekick: "helper" },
+    });
+    try {
+      const result = await helper.run(
+        `请调用 MCP 工具 set_agent_mode，参数 agentId="${thread.agentId}"、modeId="${modeId}"，把该 agent 的模式切换为 ${modeId}。成功后只回复：done；如果 set_agent_mode 工具不可用，只回复：tool-unavailable。`,
+        { timeoutMs: 60_000 },
+      );
+      if ((result.lastMessage ?? "").toLowerCase().includes("tool-unavailable")) {
+        return { ok: false, error: "Paseo 工具不可用（需开启 daemon.mcp.injectIntoAgents）" };
+      }
+      const snapshot = await paseo.agents.ref(thread.agentId).refresh();
+      if (snapshot?.agent.currentModeId === modeId) return { ok: true };
+      return { ok: false, error: `切换未生效（当前仍是 ${snapshot?.agent.currentModeId ?? "未知"}）` };
     } finally {
       void helper.archive().catch(() => {});
     }
@@ -553,6 +609,16 @@ export async function rebuildThread(
     }
   }
 
+  // 跟随主会话：线程没记录思考档或换过模型时，从主会话重新继承；features 按 provider 继承
+  const mainRef = await paseo.agents.ref(thread.mainAgentId).refresh().catch(() => null);
+  const main = mainRef?.agent ?? null;
+  const inheritedThinkingOptionId =
+    (provider === thread.provider && model === thread.model ? thread.thinkingOptionId : null) ??
+    (main && provider === main.provider && model === (main.model ?? "")
+      ? main.effectiveThinkingOptionId ?? main.thinkingOptionId ?? null
+      : null);
+  const inheritedFeatureValues = main && provider === main.provider ? featuresToValues(main.features) : {};
+
   const oldAgentId = thread.agentId;
   const systemPrompt = buildSystemPrompt({
     mainAgentId: thread.mainAgentId,
@@ -584,12 +650,14 @@ export async function rebuildThread(
     }
   }
 
-  const modeId = thread.mode === "ask" ? await pickReadOnlyMode(paseo, provider) : undefined;
+  const modeId =
+    thread.mode === "ask" ? await pickReadOnlyMode(paseo, provider) : await pickBuildMode(paseo, provider);
   const handle = await paseo.workspaces.ref(thread.workspaceId).agents.create({
     config: {
       provider: model ? `${provider}/${model}` : provider,
       ...(modeId ? { modeId } : {}),
-      ...(thread.thinkingOptionId ? { thinkingOptionId: thread.thinkingOptionId } : {}),
+      ...(inheritedThinkingOptionId ? { thinkingOptionId: inheritedThinkingOptionId } : {}),
+      ...(Object.keys(inheritedFeatureValues).length > 0 ? { featureValues: inheritedFeatureValues } : {}),
       systemPrompt,
     },
     title: thread.title,
@@ -604,6 +672,7 @@ export async function rebuildThread(
     agentId: handle.id,
     provider,
     model,
+    thinkingOptionId: inheritedThinkingOptionId,
     state: "open",
     stateReason: null,
     updatedAt: Date.now(),

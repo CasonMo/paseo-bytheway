@@ -263,6 +263,24 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* 主会话 agent 配置继承                                                  */
+/* ------------------------------------------------------------------ */
+
+type AgentFeatureLike = { id: string; value?: boolean | string | null };
+
+/** 提取主会话快照 features（toggle/select）的值，供 create 时 featureValues 继承；跳过未设置的项。 */
+export function featuresToValues(
+  features: readonly AgentFeatureLike[] | null | undefined,
+): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const feature of features ?? []) {
+    if (feature.value === null || feature.value === undefined) continue;
+    values[feature.id] = feature.value;
+  }
+  return values;
+}
+
+/* ------------------------------------------------------------------ */
 /* 能力探测                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -290,6 +308,24 @@ export async function pickReadOnlyMode(paseo: PaseoApi, provider: string): Promi
     const modes = result.modes ?? [];
     const plan = modes.find((mode) => /plan|read/i.test(mode.id) || /plan|read/i.test(mode.label));
     return plan?.id;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPlanMode(mode: { id: string; label: string }): boolean {
+  return /plan|read/i.test(mode.id) || /plan|read/i.test(mode.label);
+}
+
+/** 选择 provider 的执行（非 plan/read）模式；无匹配时返回 undefined（provider 默认）。 */
+export async function pickBuildMode(paseo: PaseoApi, provider: string): Promise<string | undefined> {
+  try {
+    const result = await paseo.providers.listModes(provider);
+    const modes = result.modes ?? [];
+    const build =
+      modes.find((mode) => /build|code|exec/i.test(mode.id) || /build|code|exec/i.test(mode.label)) ??
+      modes.find((mode) => !isPlanMode(mode));
+    return build?.id;
   } catch {
     return undefined;
   }

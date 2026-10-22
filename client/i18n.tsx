@@ -253,6 +253,9 @@ export function localizeServerMessage(messageText: string, locale: string): stri
   if (messageText.includes("模型切换失败")) {
     return "Model switch failed — try again, or start a new thread with the desired model.";
   }
+  if (messageText.includes("模式切换失败") || messageText.includes("切换未生效")) {
+    return "Mode switch failed — the message was not sent. Try again, or switch the mode from the agent's native tab.";
+  }
   if (messageText.includes("Paseo 工具不可用")) {
     return "Paseo tools are unavailable on this host (enable daemon.mcp.injectIntoAgents).";
   }

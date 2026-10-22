@@ -5,7 +5,7 @@ import { z } from "zod";
 export const sidekickSettings = defineSettings({
   id: "bytheway-settings",
   scope: "host",
-  version: 1,
+  version: 2,
   schema: z.object({
     // 新线程默认
     defaultMode: z.enum(["ask", "work"]).default("ask"),
@@ -22,7 +22,7 @@ export const sidekickSettings = defineSettings({
     titleModel: z.string().default("follow"),
 
     // 权限
-    permissionPolicy: z.enum(["ask", "allow-readonly", "deny-all"]).default("ask"),
+    permissionPolicy: z.enum(["follow", "ask", "allow-readonly", "deny-all"]).default("follow"),
     permissionTimeoutReadMin: z.number().int().min(0).max(1440).default(15),
     permissionTimeoutWriteMin: z.number().int().min(0).max(1440).default(30),
 
@@ -32,7 +32,13 @@ export const sidekickSettings = defineSettings({
     maxConcurrentTotal: z.number().int().min(1).max(16).default(8),
     experimentalCancel: z.boolean().default(true),
   }),
-  migrate: (values) => values,
+  migrate: (values, fromVersion) => {
+    if (fromVersion < 2 && values && typeof values === "object") {
+      const v = values as { permissionPolicy?: string };
+      if (v.permissionPolicy === "ask") return { ...v, permissionPolicy: "follow" };
+    }
+    return values;
+  },
 });
 
 export type SidekickSettings = z.infer<typeof sidekickSettings.schema>;

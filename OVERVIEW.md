@@ -41,12 +41,14 @@ Each side thread is backed by a temporary agent in the same workspace:
 
 Settings → Plugins → ByTheWay 侧聊:
 
-- Default mode (Chat / Build) and default model (follow the main session or fixed provider/model)
+- Default mode (Chat / Build) and default model (follow the main session or fixed
+  provider/model); new threads also inherit the main session's thinking level and
+  provider feature toggles (e.g. OpenCode auto-accept) when the model/provider match
 - New threads can pick any provider; existing threads switch models in place within their own provider only
 - First-turn snapshot depth, action digest, context fallback
 - Attach side agents to the main session as children
 - AI thread titles and the title-generation model
-- Permission policy (ask / auto-allow read-only / deny all) with tiered auto-deny timeouts
+- Permission policy (follow the main session / ask + auto-deny timeout / auto-allow read-only / deny all)
 - Concurrency limits (Chat / Build / total) and the experimental cancel switch
 
 No account or extra keys are required; the plugin reuses the agent providers configured
@@ -66,11 +68,15 @@ and the interface works on desktop, web, and mobile clients.
   plugin fetches `package.json` / `paseo-plugin.json` from this repository's main branch on
   `raw.githubusercontent.com` to check for updates (version metadata only; no session data
   is uploaded).
-- Permissions: tool permission requests from side agents appear inline in the panel for
-  approval or denial; question-type requests render as a step-by-step form (one question
-  per screen, single-select advances automatically, all answers submitted once at the
-  last step); unanswered requests are auto-denied after the configured tiered
-  timeout;
+- Permissions: new side agents inherit the main session's thinking level and provider
+  feature toggles (for example OpenCode's auto-accept) at creation, so permission
+  behaviour matches the main session by default. Tool permission requests from side
+  agents appear inline in the panel for approval or denial; question-type requests render
+  as a step-by-step form (one question per screen, single-select advances automatically,
+  all answers submitted once at the last step). By default the plugin leaves permission
+  handling to Paseo itself ("follow"), so side agents behave like the main session;
+  optional plugin policies can auto-allow read-only requests, deny all, or auto-deny
+  unanswered requests after the configured tiered timeout;
 - Stop: cancellation is requested through Paseo's tools first; if it does not take
   effect, the panel points to the native tab to stop the agent there.
 
@@ -80,9 +86,11 @@ and the interface works on desktop, web, and mobile clients.
   is archived, threads are marked stopped and can be rebuilt to continue;
 - Existing threads switch models in place within their own provider (the provider is
   fixed when the thread is created; start a new thread to use another provider).
-  Switching Chat/Build mode also switches in place (the next message carries a
-  mode-switch note);
-- AI titles and the experimental cancel create a short-lived helper agent that archives
-  itself when done (it may appear briefly in the agent list);
+  Switching Chat/Build mode also switches in place: the thread's agent mode is switched
+  for real (via a short-lived helper agent calling Paseo's set_agent_mode), and the next
+  message carries a mode-switch note; if the switch fails the message is not sent and the
+  panel shows why;
+- AI titles, the experimental cancel, and model/mode switching create a short-lived helper
+  agent that archives itself when done (it may appear briefly in the agent list);
 - Running side chats are limited by the configured concurrency caps; requests beyond the
   cap are rejected with a hint.

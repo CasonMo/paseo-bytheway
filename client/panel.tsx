@@ -153,11 +153,10 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const listRef = useRef<{ scrollToEnd?: (options?: { animated?: boolean }) => void } | null>(null);
   const followRef = useRef(true);
   const lastOffsetRef = useRef(0);
-  const programmaticAtRef = useRef(0);
+  const lastContentHeightRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
 
   const scrollToBottom = useCallback((animated: boolean) => {
-    programmaticAtRef.current = Date.now();
     listRef.current?.scrollToEnd?.({ animated });
   }, []);
 
@@ -172,23 +171,24 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
       const y = contentOffset.y;
       const previous = lastOffsetRef.current;
+      const height = contentSize.height;
+      const previousHeight = lastContentHeightRef.current;
       lastOffsetRef.current = y;
-      const nearBottom = y + layoutMeasurement.height >= contentSize.height - 80;
-      if (nearBottom) {
-        if (!followRef.current) {
-          followRef.current = true;
-          setShowJump(false);
-        }
-        return;
-      }
-      // 关键：只有「明显向上滚动」且不是我们刚发起的程序化滚动，才视为用户手动上滑。
-      // 流式增长会导致采样位置远离底部，绝不能因此判定为用户上滑。
-      const scrolledUp = y < previous - 8;
-      const sinceProgrammatic = Date.now() - programmaticAtRef.current;
-      if (scrolledUp && sinceProgrammatic > 300) {
+      lastContentHeightRef.current = height;
+      const contentShrank = height < previousHeight - 2;
+      // 用户上滚（y 减小、非高度收缩）→ 立即放弃跟随，翻历史绝不会被拉回。
+      if (y < previous - 1 && !contentShrank) {
         if (followRef.current) {
           followRef.current = false;
           setShowJump(true);
+        }
+        return;
+      }
+      // 向下滚回接近底部（40px 内）→ 自动恢复跟随；程序性贴底只会朝此方向，不会误停。
+      if (y > previous + 1 && y + layoutMeasurement.height >= height - 40) {
+        if (!followRef.current) {
+          followRef.current = true;
+          setShowJump(false);
         }
       }
     },
@@ -201,6 +201,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   useEffect(() => {
     followRef.current = true;
     setShowJump(false);
+    lastOffsetRef.current = 0;
+    lastContentHeightRef.current = 0;
     scrollToBottom(false);
   }, [selectedId, scrollToBottom]);
 
@@ -897,7 +899,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
                 onPress={() => {
                   followRef.current = true;
                   setShowJump(false);
-                  scrollToBottom(true);
+                  // 瞬时跳底：平滑动画的过冲回弹会产生 y 减小帧，被滚动监听误判为用户上滚。
+                  scrollToBottom(false);
                 }}
               >
                 <Text style={{ color: theme.colors.foreground, fontSize: 11 }}>{t.jumpToBottom}</Text>
