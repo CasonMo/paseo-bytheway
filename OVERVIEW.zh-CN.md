@@ -18,8 +18,9 @@
 - `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
 - Command Center 可打开「ByTheWay 侧聊」面板与设置页；
 - 线程下拉列表可一键复制该线程的 Agent ID（用于把 agent 交给其它工具）；
+- 每个线程标签自带 ✕，一键关闭（归档）该线程；
 - 桌面端底部输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）；
-- 侧聊正在回答时仍可发送：发送会打断当前回答，按新消息重新开始一轮（Enter 与「发送」按钮行为一致）；
+- 回答中输入框按钮只显示「停止」（空闲时只显示「发送」）；回答中按 Enter 发送会打断当前回答、按新消息重新开始一轮（toast 提示）；
 - 正文使用宿主 Markdown 渲染；界面语言跟随 Paseo App 语言；
 - 面板顶部会提示 GitHub main 上是否有新版本及所需 Paseo 版本（需在终端执行 `paseo plugin update paseo-bytheway`）。
 

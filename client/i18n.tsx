@@ -47,7 +47,6 @@ export interface UIStrings {
   sending: string;
   stop: string;
   stopping: string;
-  busyHint: string;
   sentInterruptToast: string;
   willSendTo: (title: string) => string;
   willSwitchMode: (mode: string) => string;
@@ -65,6 +64,7 @@ export interface UIStrings {
   rename: string;
   copyId: string;
   archive: string;
+  closeTab: string;
   renameSheet: string;
   threadNamePlaceholder: string;
   modelsSheet: string;
@@ -158,7 +158,6 @@ export function useT(): UIStrings {
       sending: t("sending"),
       stop: t("stop"),
       stopping: t("stopping"),
-      busyHint: t("busyHint"),
       sentInterruptToast: t("sentInterruptToast"),
       willSendTo: (title: string) => t("willSendTo", { title }),
       willSwitchMode: (mode: string) => t("willSwitchMode", { mode }),
@@ -176,6 +175,7 @@ export function useT(): UIStrings {
       rename: t("rename"),
       copyId: t("copyId"),
       archive: t("archive"),
+      closeTab: t("closeTab"),
       renameSheet: t("renameSheet"),
       threadNamePlaceholder: t("threadNamePlaceholder"),
       modelsSheet: t("modelsSheet"),

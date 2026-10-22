@@ -110,7 +110,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       setThreadStatuses(result.threadStatuses ?? {});
       setSelectedId((current) => {
         if (current && result.threads.some((thread) => thread.id === current)) return current;
-        return result.threads[0]?.id ?? null;
+        return result.threads.find((thread) => thread.state === "open")?.id ?? null;
       });
     } catch {
       // daemon 暂不可用：保留现有列表
@@ -317,7 +317,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   // 底部提示：仅在有实际指导意义时显示（继续现有线程时不再显示"将发送到…"）
   const hintText = running
-    ? t.busyHint
+    ? null
     : selected && selected.state === "stopped"
       ? t.willRebuild
       : selected && selected.state === "open" && modelChangedOtherProvider
@@ -421,6 +421,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     async (threadId: string) => {
       try {
         await archiveRpc({ threadId });
+        // 归档的是当前线程：先清选中，refresh 会落到下一个 open 线程（没有则新建态）
+        setSelectedId((current) => (current === threadId ? null : current));
         toast.show(t.archivedToast, { variant: "info" });
         await refresh();
       } catch (error) {
@@ -628,9 +630,11 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   const tabThreads = useMemo(() => {
     const max = compact ? 2 : 3;
-    const head = threads.slice(0, max);
-    if (selected && !head.some((thread) => thread.id === selected.id)) {
-      return [...threads.slice(0, max - 1), selected];
+    // tab 行只展示 open 线程；已归档（stopped）的从「更多会话」进
+    const open = threads.filter((thread) => thread.state === "open");
+    const head = open.slice(0, max);
+    if (selected && selected.state === "open" && !head.some((thread) => thread.id === selected.id)) {
+      return [...open.slice(0, max - 1), selected];
     }
     return head;
   }, [threads, selected, compact]);
@@ -790,6 +794,14 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
                     >
                       {displayTitle(thread)}
                     </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={t.closeTab}
+                      hitSlop={6}
+                      onPress={() => void archiveSelected(thread.id)}
+                    >
+                      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>✕</Text>
+                    </Pressable>
                   </Pressable>
                 );
               })}
@@ -969,21 +981,22 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
                 {stopping ? t.stopping : t.stop}
               </Text>
             </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            style={[
-              styles.primaryButton,
-              styles.composerAction,
-              (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
-            ]}
-            onPress={() => void send()}
-            disabled={!input.trim() || sending}
-          >
-            <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
-              {sending ? t.sending : t.send}
-            </Text>
-          </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              style={[
+                styles.primaryButton,
+                styles.composerAction,
+                (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
+              ]}
+              onPress={() => void send()}
+              disabled={!input.trim() || sending}
+            >
+              <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
+                {sending ? t.sending : t.send}
+              </Text>
+            </Pressable>
+          )}
         </View>
         <View style={{ gap: 2 }}>
           {hintText ? <Text style={styles.muted}>{hintText}</Text> : null}

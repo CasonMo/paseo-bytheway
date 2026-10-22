@@ -102,11 +102,11 @@ export const ReasoningItemView = memo(function ReasoningItemView({
         onPress={() => setExpanded((value) => !value)}
         style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 8, paddingVertical: 5 }}
       >
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+        <Text style={{ color: theme.colors.foregroundMuted, opacity: 0.75, fontSize: 11 }}>
           {streaming ? t.reasoningRunning : t.reasoning}
         </Text>
         <View style={{ flex: 1 }} />
-        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10 }}>{expanded ? t.collapse : t.expand}</Text>
+        <Text style={{ color: theme.colors.foregroundMuted, opacity: 0.75, fontSize: 10 }}>{expanded ? t.collapse : t.expand}</Text>
       </Pressable>
       {expanded ? (
         <View style={{ paddingHorizontal: 8, paddingBottom: 8 }}>
@@ -235,7 +235,13 @@ export const ToolItemView = memo(function ToolItemView({
         <Icon name={TOOL_ICON[type] ?? "Wrench"} size={13} color={theme.colors.foregroundMuted} />
         <Text
           numberOfLines={1}
-          style={{ color: theme.colors.foreground, fontSize: compact ? 11.5 : 12, fontFamily: "Menlo", flex: 1 }}
+          style={{
+            color: theme.colors.foregroundMuted,
+            opacity: 0.8,
+            fontSize: compact ? 11.5 : 12,
+            fontFamily: "Menlo",
+            flex: 1,
+          }}
         >
           {toolTitle(item)}
         </Text>

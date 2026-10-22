@@ -27,11 +27,12 @@ Each side thread is backed by a temporary agent in the same workspace:
 - The Command Center can open the ByTheWay panel and its settings;
 - The threads dropdown can copy a thread's agent id to the clipboard (for handing the
   agent to another tool);
+- Each thread tab has a ✕ that archives that thread in one click;
 - On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
   (same as the main Paseo composer);
-- While a side chat is still answering you can keep sending: the send interrupts the running
-  answer and starts a fresh turn with the new message (Enter and the Send button behave the
-  same);
+- While a side chat is answering, the composer shows only Stop (when idle it shows only
+  Send); pressing Enter still interrupts the current answer and starts a fresh turn with
+  the new message (a toast confirms);
 - Assistant text uses the host Markdown renderer; the UI language follows the Paseo app language;
 - The panel shows a banner when a newer plugin version is available on GitHub main, including
   the required Paseo version (apply with `paseo plugin update paseo-bytheway` in a terminal).
