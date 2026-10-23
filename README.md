@@ -13,7 +13,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
 - **运行中**：按钮互斥——回答中只显示「停止」，空闲时只显示「发送」；回答中按 Enter 发送会打断当前回答、重新开始一轮（toast 提示）。
 - **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。
-- **体验**：AI 线程标题（可配置标题模型）、手动重命名、线程标签 ✕ 一键关闭归档、线程列表一键复制 Agent ID、状态圆点、Tab 线程切换、智能贴底滚动（跟随流式输出；上翻即停，滚回底部附近或点「回到底部」恢复）、底部「提 Issue / 提功能」直达 GitHub、界面语言跟随 Paseo App、宿主 Markdown 正文、更新横幅；桌面端输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
+- **体验**：AI 线程标题（可配置标题模型）、手动重命名、线程标签 ✕ 一键关闭归档、线程列表一键复制 Agent ID、状态圆点、Tab 线程切换、会话顶部显示最初提问，智能贴底滚动（跟随流式输出；上翻即停，滚回底部附近或点「回到底部」恢复）、底部「提 Issue / 提功能」直达 GitHub、界面语言跟随 Paseo App、宿主 Markdown 正文、更新横幅；桌面端输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
 
 ## 命令
 

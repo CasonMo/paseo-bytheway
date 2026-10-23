@@ -28,6 +28,141 @@ describe("liveReducer（增量追加语义，对齐官方运行时）", () => {
     expect(state.items[2]).toMatchObject({ kind: "assistant", text: "完成了", phase: "streaming" });
   });
 
+  it("首条 agent_message 在会话顶部补上用户 prompt，同时保留工具行", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-1",
+        name: "agent_message",
+        status: "running",
+        detail: {
+          type: "plain_text",
+          text: "最初的问题\n\n以下为主会话的最近上下文快照（生成于 2026-01-01）。",
+        },
+      },
+    });
+
+    expect(state.items).toHaveLength(2);
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "最初的问题" });
+    expect(state.items[1]).toMatchObject({ kind: "tool", name: "agent_message" });
+
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-1",
+        name: "agent_message",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          text: "最初的问题\n\n以下为主会话的最近上下文快照（生成于 2026-01-01）。",
+        },
+      },
+    });
+    expect(state.items).toHaveLength(2);
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "最初的问题" });
+    expect(state.items[1]).toMatchObject({ kind: "tool", name: "agent_message", status: "completed" });
+  });
+
+  it("用户后来重复发送相同问题时不会被初始 prompt 去重吞掉", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-repeat",
+        name: "agent_message",
+        status: "completed",
+        detail: { type: "plain_text", text: "同样的问题" },
+      },
+    });
+    state = stream(state, { type: "timeline", provider: "p", item: { type: "user_message", text: "另一个问题" } });
+    state = stream(state, { type: "timeline", provider: "p", item: { type: "user_message", text: "同样的问题" } });
+
+    expect(state.items.filter((item) => item.kind === "user" && item.text === "同样的问题")).toHaveLength(2);
+  });
+
+  it("首条 agent_message 先到但文本后到时，会补上 prompt 并保留工具行", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-late",
+        name: "agent_message",
+        status: "running",
+        detail: { type: "plain_text", text: "" },
+      },
+    });
+    expect(state.items[0]).toMatchObject({ kind: "tool", name: "agent_message" });
+
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-late",
+        name: "agent_message",
+        status: "completed",
+        detail: { type: "plain_text", text: "后到的最初问题" },
+      },
+    });
+
+    expect(state.items).toHaveLength(2);
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "后到的最初问题" });
+    expect(state.items[1]).toMatchObject({ kind: "tool", name: "agent_message", status: "completed" });
+  });
+
+  it("agent_message 的文本补全时更新同一个 prompt 气泡，不重复插入", () => {
+    let state = initialLiveState();
+    const item = (text: string) => ({
+      type: "tool_call" as const,
+      callId: "agent-message-partial",
+      name: "agent_message",
+      status: "running" as const,
+      detail: { type: "plain_text", text },
+    });
+    state = stream(state, { type: "timeline", provider: "p", item: item("Q1") });
+    state = stream(state, { type: "timeline", provider: "p", item: item("Q1 full") });
+
+    expect(state.items.filter((entry) => entry.kind === "user" && entry.key.startsWith("initial:"))).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "Q1 full" });
+  });
+
+  it("初始 prompt 后紧跟真实同名 user_message 时不会重复", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "agent-message-dedupe",
+        name: "agent_message",
+        status: "completed",
+        detail: { type: "plain_text", text: "同一个问题" },
+      },
+    });
+    state = stream(state, { type: "timeline", provider: "p", item: { type: "user_message", text: "同一个问题" } });
+
+    expect(state.items.filter((entry) => entry.kind === "user" && entry.text === "同一个问题")).toHaveLength(1);
+    expect(state.items[1]).toMatchObject({ kind: "tool", name: "agent_message" });
+  });
+
+  it("initial_prompt action 会更新顶部同一气泡", () => {
+    let state = liveReducer(initialLiveState(), { type: "initial_prompt", text: "第一版问题" });
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "第一版问题" });
+
+    state = liveReducer(state, { type: "initial_prompt", text: "补全后的问题" });
+    expect(state.items.filter((item) => item.kind === "user" && item.key.startsWith("initial:"))).toHaveLength(1);
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "补全后的问题" });
+  });
+
   it("messageId 不同 → 新条目；匹配 → 继续追加", () => {
     let state = initialLiveState();
     state = stream(state, { type: "timeline", provider: "p", item: { type: "assistant_message", text: "A", messageId: "m1" } });

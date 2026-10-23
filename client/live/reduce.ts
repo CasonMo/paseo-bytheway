@@ -1,3 +1,4 @@
+import { extractInitialPrompt, normalizePrompt } from "./initial-prompt";
 import type {
   LiveAction,
   LiveItem,
@@ -46,6 +47,45 @@ function closeStreams(state: LiveState): LiveState {
   return changed ? { ...state, items } : state;
 }
 
+function hasUserPrompt(items: LiveItem[], text: string): boolean {
+  const target = normalizePrompt(text);
+  return items.some((item) => item.kind === "user" && normalizePrompt(item.text) === target);
+}
+
+/** Update the synthetic initial-prompt bubble in place, or prepend it once. */
+function upsertInitialPrompt(state: LiveState, text: string, key: string): LiveState {
+  const index = state.items.findIndex(
+    (item) => item.kind === "user" && item.key.startsWith("initial:"),
+  );
+  if (index >= 0) {
+    const existing = state.items[index];
+    if (existing.kind === "user" && normalizePrompt(existing.text) === normalizePrompt(text)) {
+      return state;
+    }
+    const items = state.items.slice();
+    items[index] = { kind: "user", key: existing.key, text };
+    return { ...state, items };
+  }
+  if (hasUserPrompt(state.items, text)) return state;
+  return { ...state, items: [{ kind: "user", key, text }, ...state.items] };
+}
+
+/** Only dedupe a real initial user_message that arrives beside the envelope. */
+function isInitialDuplicate(items: LiveItem[], text: string): boolean {
+  const target = normalizePrompt(text);
+  let sawInitial = false;
+  for (const item of items) {
+    if (item.kind === "user" && item.key.startsWith("initial:")) {
+      if (normalizePrompt(item.text) !== target) return false;
+      sawInitial = true;
+      continue;
+    }
+    if (item.kind === "tool" && item.name === "agent_message") continue;
+    return false;
+  }
+  return sawInitial;
+}
+
 function findTool(items: LiveItem[], callId: string): Extract<LiveItem, { kind: "tool" }> | undefined {
   for (let i = items.length - 1; i >= 0; i -= 1) {
     const item = items[i];
@@ -59,6 +99,7 @@ function applyTimelineItem(state: LiveState, raw: RawItem, turnId: string | null
     case "user_message": {
       const chunk = (raw.text ?? "").replace(/\r/g, "");
       if (!/\S/.test(chunk)) return state;
+      if (isInitialDuplicate(state.items, chunk)) return state;
       const next = closeStreams(state);
       return pushItem(next, { kind: "user", key: liveKey(next), text: chunk });
     }
@@ -115,7 +156,11 @@ function applyTimelineItem(state: LiveState, raw: RawItem, turnId: string | null
       });
     }
     case "tool_call": {
-      const next = closeStreams(state);
+      const initialPrompt = extractInitialPrompt(raw);
+      const withInitialPrompt = initialPrompt
+        ? upsertInitialPrompt(state, initialPrompt, `initial:${raw.callId}`)
+        : state;
+      const next = closeStreams(withInitialPrompt);
       const existing = findTool(next.items, raw.callId);
       const item: Extract<LiveItem, { kind: "tool" }> = {
         kind: "tool",
@@ -260,6 +305,8 @@ export function liveReducer(state: LiveState, action: LiveAction): LiveState {
       };
     case "refetch":
       return { ...state, epoch: action.epoch, items: action.items };
+    case "initial_prompt":
+      return upsertInitialPrompt(state, action.text, "initial:prompt");
     case "turn_snapshot": {
       if (action.activeTurn) {
         const parsed = action.activeTurn.startedAt ? Date.parse(action.activeTurn.startedAt) : Number.NaN;

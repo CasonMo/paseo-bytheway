@@ -181,6 +181,7 @@ export interface LiveState {
 export type LiveAction =
   | { type: "reset" }
   | { type: "refetch"; epoch: string | null; items: LiveItem[] }
+  | { type: "initial_prompt"; text: string }
   | {
       type: "turn_snapshot";
       activeTurn: { turnId: string; startedAt: string | null } | null;

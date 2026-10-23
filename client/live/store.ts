@@ -1,5 +1,6 @@
 import { usePaseo } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { extractInitialPrompt, findInitialPromptInPages, normalizePrompt } from "./initial-prompt";
 import { liveReducer } from "./reduce";
 import {
   initialLiveState,
@@ -19,15 +20,42 @@ function message(error: unknown): string {
 }
 
 /** 快照（refetch）条目 → 渲染条目。 */
-export function convertEntries(entries: TimelineEntry[]): LiveItem[] {
+export function convertEntries(entries: TimelineEntry[], fallbackInitialPrompt?: string | null): LiveItem[] {
+  const rawEntries = entries.map((entry) => ({
+    entry,
+    item: entry.item as unknown as RawItem,
+  }));
+  let initialPrompt: { callId: string | null; text: string; index: number } | null = null;
+  for (const [index, { item }] of rawEntries.entries()) {
+    const text = extractInitialPrompt(item);
+    if (text) {
+      initialPrompt = { callId: item.type === "tool_call" ? item.callId : null, text, index };
+      break;
+    }
+  }
+  if (!initialPrompt && fallbackInitialPrompt) {
+    initialPrompt = { callId: null, text: fallbackInitialPrompt, index: -1 };
+  }
+  // Some providers may also record the initial prompt as a real user_message.
+  // Replace only the message immediately beside the envelope; a later identical
+  // message is a genuine repeated question.
+  const duplicateUserIndex =
+    initialPrompt && initialPrompt.index >= 0
+      ? rawEntries.findIndex(
+          ({ item }, index) =>
+            item.type === "user_message" &&
+            Math.abs(index - initialPrompt.index) <= 1 &&
+            normalizePrompt(item.text) === normalizePrompt(initialPrompt.text),
+        )
+      : -1;
+
   const items: LiveItem[] = [];
-  for (const entry of entries) {
-    const item = entry.item as unknown as RawItem;
+  for (const [index, { entry, item }] of rawEntries.entries()) {
     const key = `seq:${entry.seqStart}`;
     const turnId = (entry as unknown as { turnId?: string }).turnId ?? null;
     switch (item.type) {
       case "user_message":
-        items.push({ kind: "user", key, text: item.text });
+        if (index !== duplicateUserIndex) items.push({ kind: "user", key, text: item.text });
         break;
       case "assistant_message":
         items.push({
@@ -76,6 +104,13 @@ export function convertEntries(entries: TimelineEntry[]): LiveItem[] {
         break;
     }
   }
+  if (initialPrompt) {
+    items.unshift({
+      kind: "user",
+      key: `initial:${initialPrompt.callId ?? "prompt"}`,
+      text: initialPrompt.text,
+    });
+  }
   return items;
 }
 
@@ -100,26 +135,66 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
   const paseo = usePaseo();
   const [state, dispatch] = useReducer(liveReducer, undefined, initialLiveState);
   const generationRef = useRef(0);
+  const snapshotSeqRef = useRef(0);
+  const initialPromptCacheRef = useRef<{ agentId: string; prompt: string } | null>(null);
+
+  const resolveInitialPrompt = useCallback(
+    async (targetAgentId: string, firstPage: TimelinePage): Promise<string | null> => {
+      const cached = initialPromptCacheRef.current;
+      if (cached?.agentId === targetAgentId) return cached.prompt;
+      const prompt = await findInitialPromptInPages(
+        firstPage,
+        (cursor) =>
+          paseo.agents.ref(targetAgentId).timeline.refetch({
+            direction: "before",
+            cursor: cursor as NonNullable<TimelinePage["startCursor"]>,
+            limit: 200,
+          }),
+      );
+      if (prompt) initialPromptCacheRef.current = { agentId: targetAgentId, prompt };
+      return prompt;
+    },
+    [paseo],
+  );
 
   const refetch = useCallback(async () => {
     if (!agentId) return;
     const gen = generationRef.current;
+    const snapshot = ++snapshotSeqRef.current;
     try {
       const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
-      if (generationRef.current !== gen) return;
+      if (generationRef.current !== gen || snapshotSeqRef.current !== snapshot) return;
       const payload = page as unknown as { epoch?: string | null; entries?: TimelineEntry[] };
+      const cached =
+        initialPromptCacheRef.current?.agentId === agentId
+          ? initialPromptCacheRef.current.prompt
+          : null;
       dispatch({
         type: "refetch",
         epoch: payload.epoch ?? null,
-        items: convertEntries(payload.entries ?? []),
+        items: convertEntries(payload.entries ?? [], cached),
       });
+      // Initial-prompt pagination is non-blocking: render the tail immediately,
+      // then upsert the prompt when the older pages resolve.
+      void resolveInitialPrompt(agentId, page)
+        .then((prompt) => {
+          if (
+            prompt &&
+            generationRef.current === gen &&
+            snapshotSeqRef.current === snapshot
+          ) {
+            dispatch({ type: "initial_prompt", text: prompt });
+          }
+        })
+        .catch(() => {});
     } catch (error) {
-      if (generationRef.current !== gen) return;
+      if (generationRef.current !== gen || snapshotSeqRef.current !== snapshot) return;
       dispatch({ type: "error", error: message(error) });
     }
-  }, [paseo, agentId]);
+  }, [paseo, agentId, resolveInitialPrompt]);
 
   useEffect(() => {
+    snapshotSeqRef.current += 1;
     dispatch({ type: "reset" });
     if (!agentId) return;
     const gen = ++generationRef.current;
@@ -129,7 +204,6 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
     let attempts = 0;
 
     const isStale = () => disposed || generationRef.current !== gen;
-
 
     const syncTurnSnapshot = async (): Promise<void> => {
       try {
@@ -152,17 +226,29 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
     };
 
     const load = async (): Promise<void> => {
+      const snapshot = ++snapshotSeqRef.current;
       try {
         const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", limit: 200 });
-        if (isStale()) return;
+        if (isStale() || snapshotSeqRef.current !== snapshot) return;
         const payload = page as unknown as { epoch?: string | null; entries?: TimelineEntry[] };
+        const cached =
+          initialPromptCacheRef.current?.agentId === agentId
+            ? initialPromptCacheRef.current.prompt
+            : null;
         dispatch({
           type: "refetch",
           epoch: payload.epoch ?? null,
-          items: convertEntries(payload.entries ?? []),
+          items: convertEntries(payload.entries ?? [], cached),
         });
+        void resolveInitialPrompt(agentId, page)
+          .then((prompt) => {
+            if (prompt && !isStale() && snapshotSeqRef.current === snapshot) {
+              dispatch({ type: "initial_prompt", text: prompt });
+            }
+          })
+          .catch(() => {});
       } catch (error) {
-        if (isStale()) return;
+        if (isStale() || snapshotSeqRef.current !== snapshot) return;
         dispatch({ type: "error", error: message(error) });
       }
       await syncTurnSnapshot();
@@ -235,7 +321,7 @@ export function useThreadStream(agentId: string | null): ThreadStreamControls {
       if (retryTimer) clearTimeout(retryTimer);
       void subscription?.release();
     };
-  }, [agentId, paseo]);
+  }, [agentId, paseo, resolveInitialPrompt]);
 
   // 权限解决只走独立的 agent_permission_resolved 消息，不进 agent_stream，
   // timeline 订阅收不到，需单独订阅才能被动清除横幅。

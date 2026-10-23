@@ -1,4 +1,5 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
 import type { SidekickSettings } from "../shared/settings";
 import type { ThreadMode, ThreadRecord } from "../shared/types";
@@ -368,14 +369,14 @@ async function createThread(
   let prompt = input.question;
   if (input.seedFromAgentId) {
     if (input.contextMode.toolsAvailable) {
-      prompt = `这是一条接续的侧聊线程（用户更换了模型或模式）。请先调用 MCP 工具 get_agent_activity 读取 agent ${input.seedFromAgentId} 的最近活动，了解先前对话的结论与语气，然后处理：\n\n${input.question}`;
+      prompt = `${PROMPT_MARKERS.continuationPrefix}（用户更换了模型或模式）。请先调用 MCP 工具 get_agent_activity 读取 agent ${input.seedFromAgentId} 的最近活动，了解先前对话的结论与语气，${PROMPT_MARKERS.continuationQuestion}\n\n${input.question}`;
     } else {
       try {
         const tail = await fetchTranscriptTail(paseo, input.seedFromAgentId, 80);
         attachments.push(
           textAttachment(
             "接续速记.md",
-            `以下为前一条侧聊线程的历史摘要（接续用）：\n\n${buildSnapshotText(tail, {
+            `${PROMPT_MARKERS.previousThreadSummary}（接续用）：\n\n${buildSnapshotText(tail, {
               messages: 10,
               includeDigest: settings.includeActionDigest,
               budget: PASSIVE_SNAPSHOT_BUDGET,
@@ -627,8 +628,8 @@ export async function rebuildThread(
     passive: contextMode.passive,
   });
   const seed = contextMode.toolsAvailable
-    ? `这是一条被重建的侧聊线程。请先调用 MCP 工具 get_agent_activity 读取 agent ${oldAgentId} 的最近活动，了解该线程此前的问答与结论，继承其上下文与语气。然后继续处理：\n\n${question?.trim() || "（请简短总结此前的结论，然后等待用户的下一个问题。）"}`
-    : `这是一条被重建的侧聊线程。\n\n${question?.trim() || "（请等待用户的下一个问题。）"}`;
+    ? `${PROMPT_MARKERS.rebuildPrefix}。请先调用 MCP 工具 get_agent_activity 读取 agent ${oldAgentId} 的最近活动，了解该线程此前的问答与结论，继承其上下文与语气。${PROMPT_MARKERS.rebuildQuestion}\n\n${question?.trim() || PROMPT_MARKERS.emptyRebuildSummary}`
+    : `${PROMPT_MARKERS.rebuildPrefix}。\n\n${question?.trim() || PROMPT_MARKERS.emptyRebuildWait}`;
 
   const attachments: OutgoingTextAttachment[] = [];
   if (!contextMode.toolsAvailable) {
@@ -637,7 +638,7 @@ export async function rebuildThread(
       attachments.push(
         textAttachment(
           "旧线程速记.md",
-          `以下为该侧聊线程被重建前的历史摘要（可能不完整）：\n\n${buildSnapshotText(tail, {
+          `${PROMPT_MARKERS.rebuiltThreadSummary}（可能不完整）：\n\n${buildSnapshotText(tail, {
             messages: 12,
             includeDigest: settings.includeActionDigest,
             budget: PASSIVE_SNAPSHOT_BUDGET,

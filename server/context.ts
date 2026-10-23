@@ -1,4 +1,5 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { ThreadMode } from "../shared/types";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
@@ -178,7 +179,7 @@ export function buildSnapshotText(
 
   const digestLines = options.includeDigest ? buildDigestLines(tail.units) : [];
   const parts: string[] = [
-    `以下为主会话的最近上下文快照（生成于 ${new Date().toISOString()}）。${
+    `${PROMPT_MARKERS.mainSnapshot}（生成于 ${new Date().toISOString()}）。${
       options.passive
         ? "本线程处于被动同步模式：后续主会话有新的进展时，系统会自动在消息中附上增量更新。"
         : "如需主会话的最新进展，请调用 get_agent_activity 工具按需查询。"
@@ -223,7 +224,7 @@ export function buildIncrementText(
     used += rendered.length;
     lines.unshift(rendered);
   }
-  const parts = [`以下为主会话的新进展（增量更新，生成于 ${new Date().toISOString()}）。`];
+  const parts = [`${PROMPT_MARKERS.mainIncrement}（增量更新，生成于 ${new Date().toISOString()}）。`];
   if (lines.length > 0) parts.push(lines.join("\n\n"));
   if (digestLines.length > 0) parts.push(`### 新动作\n${digestLines.join("\n")}`);
   return {

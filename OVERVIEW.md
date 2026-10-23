@@ -30,6 +30,8 @@ Each side thread is backed by a temporary agent in the same workspace:
 - The threads dropdown can copy a thread's agent id to the clipboard (for handing the
   agent to another tool);
 - Each thread tab has a ✕ that archives that thread in one click;
+- The thread transcript starts with the original user prompt, reconstructed from
+  the initial side-agent message so long threads do not lose the question;
 - The bottom hint row links to this repository's GitHub issue form ("Issues & feature
   requests") — it opens in your system browser and only when you click it;
 - On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
