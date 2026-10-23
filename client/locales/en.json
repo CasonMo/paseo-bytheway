@@ -44,6 +44,8 @@
   "willNewThreadChanged": "Will start a continuation thread (inherits this thread's context)",
   "willNewThread": "Will start a new thread",
   "jumpToBottom": "Back to bottom ↓",
+  "feedbackIssue": "Issues & feature requests",
+  "linkOpenFailed": "Couldn't open the link",
   "threadsSheet": "Side Threads",
   "searchThreads": "Search threads…",
   "noThreadMatches": "No matching threads.",

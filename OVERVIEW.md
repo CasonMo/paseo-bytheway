@@ -28,6 +28,8 @@ Each side thread is backed by a temporary agent in the same workspace:
 - The threads dropdown can copy a thread's agent id to the clipboard (for handing the
   agent to another tool);
 - Each thread tab has a ✕ that archives that thread in one click;
+- The bottom hint row links to this repository's GitHub issue form ("Issues & feature
+  requests") — it opens in your system browser and only when you click it;
 - On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
   (same as the main Paseo composer);
 - While a side chat is answering, the composer shows only Stop (when idle it shows only
@@ -67,7 +69,8 @@ and the interface works on desktop, web, and mobile clients.
   you configured in Paseo, exactly like a normal Paseo session. When the panel opens, the
   plugin fetches `package.json` / `paseo-plugin.json` from this repository's main branch on
   `raw.githubusercontent.com` to check for updates (version metadata only; no session data
-  is uploaded).
+  is uploaded). The feedback link in the panel opens this repository's GitHub issue form
+  in your external browser, only when you click it.
 - Permissions: new side agents inherit the main session's thinking level and provider
   feature toggles (for example OpenCode's auto-accept) at creation, so permission
   behaviour matches the main session by default. Tool permission requests from side

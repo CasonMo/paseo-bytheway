@@ -14,3 +14,4 @@ export {
   SettingsSelect,
   SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
+export { openExternalUrl } from "@getpaseo/plugin/client";

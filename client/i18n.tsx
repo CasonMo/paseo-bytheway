@@ -56,6 +56,8 @@ export interface UIStrings {
   willNewThreadChanged: string;
   willNewThread: string;
   jumpToBottom: string;
+  feedbackIssue: string;
+  linkOpenFailed: string;
 
   threadsSheet: string;
   searchThreads: string;
@@ -167,6 +169,8 @@ export function useT(): UIStrings {
       willNewThreadChanged: t("willNewThreadChanged"),
       willNewThread: t("willNewThread"),
       jumpToBottom: t("jumpToBottom"),
+      feedbackIssue: t("feedbackIssue"),
+      linkOpenFailed: t("linkOpenFailed"),
 
       threadsSheet: t("threadsSheet"),
       searchThreads: t("searchThreads"),

@@ -44,6 +44,8 @@
   "willNewThreadChanged": "将新开接续线程（继承当前线程上下文）",
   "willNewThread": "将新开线程",
   "jumpToBottom": "回到底部 ↓",
+  "feedbackIssue": "提 Issue / 提功能",
+  "linkOpenFailed": "打开链接失败",
   "threadsSheet": "侧聊线程",
   "searchThreads": "搜索线程…",
   "noThreadMatches": "没有匹配的线程。",

@@ -15,12 +15,15 @@ import {
 } from "../shared/contracts";
 import { PLUGIN_VERSION } from "../shared/meta";
 import { sidekickSettings } from "../shared/settings";
-import { copyText, FlatList, Icon, ScrollView, TextInput, useToast } from "./host-ui";
+import { copyText, FlatList, Icon, openExternalUrl, ScrollView, TextInput, useToast } from "./host-ui";
 import { OverlaySheet } from "./overlay";
 import { localizeServerMessage, useLocale, useT } from "./i18n";
 import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
 import { LiveItemView, PermissionBanner, TurnStatusLine } from "./transcript/items";
+
+/** 反馈入口：GitHub 新建 issue（提问题 / 提功能）。 */
+const FEEDBACK_URL = "https://github.com/CasonMo/paseo-bytheway/issues/new";
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -97,7 +100,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   const [threads, setThreads] = useState<ThreadView[]>([]);
   const [threadStatuses, setThreadStatuses] = useState<Record<string, ThreadRuntimeStatus>>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const [threadModalOpen, setThreadModalOpen] = useState(false);
   const [threadQuery, setThreadQuery] = useState("");
   const [renameTarget, setRenameTarget] = useState<ThreadView | null>(null);
@@ -109,8 +112,11 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       setThreads(result.threads);
       setThreadStatuses(result.threadStatuses ?? {});
       setSelectedId((current) => {
+        // null = 用户主动处于「新会话」状态（点了 +），刷新时绝不自动跳走。
+        if (current === null) return null;
         if (current && result.threads.some((thread) => thread.id === current)) return current;
-        return result.threads.find((thread) => thread.state === "open")?.id ?? null;
+        // undefined（未决）或选中线程已失效：回落到第一个可用线程。
+        return result.threads.find((thread) => thread.state === "open")?.id ?? undefined;
       });
     } catch {
       // daemon 暂不可用：保留现有列表
@@ -424,7 +430,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       try {
         await archiveRpc({ threadId });
         // 归档的是当前线程：先清选中，refresh 会落到下一个 open 线程（没有则新建态）
-        setSelectedId((current) => (current === threadId ? null : current));
+        setSelectedId((current) => (current === threadId ? undefined : current));
         toast.show(t.archivedToast, { variant: "info" });
         await refresh();
       } catch (error) {
@@ -1002,7 +1008,29 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           )}
         </View>
         <View style={{ gap: 2 }}>
-          {hintText ? <Text style={styles.muted}>{hintText}</Text> : null}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {hintText ? <Text style={[styles.muted, { flexShrink: 1 }]}>{hintText}</Text> : null}
+            <View style={{ flex: 1 }} />
+            <Pressable
+              accessibilityRole="link"
+              hitSlop={6}
+              onPress={() => {
+                void openExternalUrl(FEEDBACK_URL).catch(() => {
+                  toast.error(t.linkOpenFailed);
+                });
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.colors.foregroundMuted,
+                  fontSize: 10.5,
+                  textDecorationLine: "underline",
+                }}
+              >
+                {t.feedbackIssue}
+              </Text>
+            </Pressable>
+          </View>
           {sendError ? <Text style={{ color: theme.colors.statusDanger, fontSize: 11 }}>{localizeServerMessage(sendError, locale)}</Text> : null}
           {stopHint ? (
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
