@@ -24,7 +24,7 @@
   "openTab": "标签页",
   "willNewThreadShort": "将新开线程",
   "emptyTitle": "从主会话旁路提问，不打扰主会话",
-  "emptyBody": "在下方输入即可开始；或在主会话输入 /btw、/btw-new 快速开聊。\n侧聊的执行过程会在这里实时直播（文本 / 工具 / 思考 / 权限）。",
+  "emptyBody": "在下方输入即可开始；或在主会话用 /btw 提问、/side 执行任务，加 -new 可新开线程。\n侧聊的执行过程会在这里实时直播（文本 / 工具 / 思考 / 权限）。",
   "emptyTranscript": "暂无消息——发送第一条问题开始直播。",
   "thinking": "正在思考…",
   "stoppedThread": "该侧聊已停止（{{reason}}）",

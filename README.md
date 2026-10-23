@@ -25,7 +25,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 | `/side-new <任务>` | 新开一条 Build 线程 |
 | `/fork [提示词]` | 克隆当前会话转录为新并行 agent |
 
-也可以从 Command Center 打开「ByTheWay 侧聊」面板或「ByTheWay 设置」。
+命令创建或续聊线程后，面板会立即刷新并选中对应线程。也可以从 Command Center 打开「ByTheWay 侧聊」面板或「ByTheWay 设置」。
 
 ## 开发
 

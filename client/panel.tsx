@@ -18,6 +18,8 @@ import { sidekickSettings } from "../shared/settings";
 import { copyText, FlatList, Icon, openExternalUrl, ScrollView, TextInput, useToast } from "./host-ui";
 import { OverlaySheet } from "./overlay";
 import { localizeServerMessage, useLocale, useT } from "./i18n";
+import { onThreadFocusRequest, peekPendingThreadFocus, takePendingThreadFocus } from "./panel-focus";
+import { bottomOffset, nextScrollFollow } from "./scroll-follow";
 import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
 import { LiveItemView, PermissionBanner, TurnStatusLine } from "./transcript/items";
@@ -106,7 +108,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [renameTarget, setRenameTarget] = useState<ThreadView | null>(null);
   const [renameText, setRenameText] = useState("");
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<ThreadView[] | null> => {
     try {
       const result = await listRpc({ mainAgentId: agentId });
       setThreads(result.threads);
@@ -118,8 +120,10 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         // undefined（未决）或选中线程已失效：回落到第一个可用线程。
         return result.threads.find((thread) => thread.state === "open")?.id ?? undefined;
       });
+      return result.threads;
     } catch {
       // daemon 暂不可用：保留现有列表
+      return null;
     }
   }, [listRpc, agentId]);
 
@@ -128,6 +132,42 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     const timer = setInterval(() => void refresh(), 20_000);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  // 命令创建/继续的线程：立即刷新列表并选中，不等 20s 轮询。
+  // 覆盖两种场景：面板挂载时消费暂存请求；面板已打开时接收实时信号。
+  useEffect(() => {
+    let cancelled = false;
+    let latestRequest = 0;
+
+    const apply = async (threadId: string) => {
+      const request = ++latestRequest;
+      let list = await refresh();
+      if (cancelled || request !== latestRequest) return;
+      // 线程刚写入注册表时列表可能慢半拍，重试一次再放弃。
+      if (!list?.some((thread) => thread.id === threadId)) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (cancelled || request !== latestRequest) return;
+        list = await refresh();
+      }
+      if (cancelled || request !== latestRequest) return;
+      if (!list?.some((thread) => thread.id === threadId)) return;
+      setSelectedId(threadId);
+      takePendingThreadFocus(agentId, threadId);
+    };
+
+    const initial = peekPendingThreadFocus(agentId);
+    if (initial) void apply(initial);
+
+    const unsubscribe = onThreadFocusRequest((request) => {
+      if (request.mainAgentId !== agentId) return;
+      void apply(request.threadId);
+    });
+    return () => {
+      cancelled = true;
+      latestRequest += 1;
+      unsubscribe();
+    };
+  }, [agentId, refresh]);
 
   const selected = useMemo(
     () => threads.find((thread) => thread.id === selectedId) ?? null,
@@ -156,14 +196,29 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   /* ---------------- 滚动跟随 ---------------- */
 
-  const listRef = useRef<{ scrollToEnd?: (options?: { animated?: boolean }) => void } | null>(null);
+  const listRef = useRef<{
+    scrollToOffset?: (options: { offset: number; animated?: boolean }) => void;
+  } | null>(null);
   const followRef = useRef(true);
   const lastOffsetRef = useRef(0);
   const lastContentHeightRef = useRef(0);
+  const contentHeightRef = useRef(0);
+  const viewportHeightRef = useRef(0);
+  /** 我们自己发起的贴底目标；用于消费由此产生的 scroll 事件。 */
+  const programmaticTargetRef = useRef<number | null>(null);
   const [showJump, setShowJump] = useState(false);
 
+  /**
+   * 用真实 contentSize/viewport 计算偏移，不再使用 FlatList.scrollToEnd()。
+   * VirtualizedList.scrollToEnd() 依赖最后一个 cell 的已测量高度；流式 Markdown
+   * 增高时该值会落后，目标可能落在当前底部之上，进而被 onScroll 误判成用户上滚。
+   */
   const scrollToBottom = useCallback((animated: boolean) => {
-    listRef.current?.scrollToEnd?.({ animated });
+    // 首次挂载尚无 contentSize 时不要误滚到顶部。
+    if (contentHeightRef.current <= 0) return;
+    const target = bottomOffset(contentHeightRef.current, viewportHeightRef.current);
+    programmaticTargetRef.current = target;
+    listRef.current?.scrollToOffset?.({ offset: target, animated });
   }, []);
 
   const onScroll = useCallback(
@@ -175,27 +230,28 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       };
     }) => {
       const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
-      const y = contentOffset.y;
-      const previous = lastOffsetRef.current;
-      const height = contentSize.height;
-      const previousHeight = lastContentHeightRef.current;
-      lastOffsetRef.current = y;
-      lastContentHeightRef.current = height;
-      const contentShrank = height < previousHeight - 2;
-      // 用户上滚（y 减小、非高度收缩）→ 立即放弃跟随，翻历史绝不会被拉回。
-      if (y < previous - 1 && !contentShrank) {
-        if (followRef.current) {
-          followRef.current = false;
-          setShowJump(true);
-        }
-        return;
-      }
-      // 向下滚回接近底部（40px 内）→ 自动恢复跟随；程序性贴底只会朝此方向，不会误停。
-      if (y > previous + 1 && y + layoutMeasurement.height >= height - 40) {
-        if (!followRef.current) {
-          followRef.current = true;
-          setShowJump(false);
-        }
+      viewportHeightRef.current = layoutMeasurement.height;
+      const result = nextScrollFollow({
+        state: {
+          following: followRef.current,
+          previousOffset: lastOffsetRef.current,
+          previousContentHeight: lastContentHeightRef.current,
+        },
+        sample: {
+          offset: contentOffset.y,
+          contentHeight: contentSize.height,
+          viewportHeight: layoutMeasurement.height,
+        },
+        programmaticTarget: programmaticTargetRef.current,
+      });
+      if (result.programmaticHandled) programmaticTargetRef.current = null;
+      lastOffsetRef.current = result.offset;
+      lastContentHeightRef.current = result.contentHeight;
+      if (followRef.current !== result.following) {
+        followRef.current = result.following;
+        setShowJump(result.jumpVisible);
+        // 用户上滑或回到底部后，旧的程序目标不再可信。
+        programmaticTargetRef.current = null;
       }
     },
     [],
@@ -209,6 +265,9 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     setShowJump(false);
     lastOffsetRef.current = 0;
     lastContentHeightRef.current = 0;
+    // 保留上一次 contentHeight：若新旧线程内容高度相同，onContentSizeChange
+    // 可能不再触发；旧值用于立即滚底，浏览器会按新内容自动 clamp。
+    programmaticTargetRef.current = null;
     scrollToBottom(false);
   }, [selectedId, scrollToBottom]);
 
@@ -217,14 +276,14 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     if (followRef.current) scrollToBottom(false);
   }, [items, turn.status, scrollToBottom]);
 
-  // 流式期间持续贴底：覆盖揭示节奏（pacing）带来的持续增高
+  // 运行中兜底贴底：覆盖流式布局的零散增高
   useEffect(() => {
-    if (!busy) return;
+    if (!running) return;
     const timer = setInterval(() => {
       if (followRef.current) scrollToBottom(false);
     }, 350);
     return () => clearInterval(timer);
-  }, [busy, scrollToBottom]);
+  }, [running, scrollToBottom]);
 
   /* ---------------- 输入区状态 ---------------- */
 
@@ -875,9 +934,14 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               data={items}
               keyExtractor={(item) => item.key}
               renderItem={({ item }) => <LiveItemView item={item} theme={theme} compact={compact} />}
+              onLayout={(event) => {
+                viewportHeightRef.current = event.nativeEvent.layout.height;
+                if (followRef.current) scrollToBottom(false);
+              }}
               onScroll={onScroll}
               scrollEventThrottle={100}
-              onContentSizeChange={() => {
+              onContentSizeChange={(_width, height) => {
+                contentHeightRef.current = height;
                 if (followRef.current) scrollToBottom(false);
               }}
               ListFooterComponent={

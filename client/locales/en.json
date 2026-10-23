@@ -24,7 +24,7 @@
   "openTab": "Tab",
   "willNewThreadShort": "will start a new thread",
   "emptyTitle": "Ask on the side without disturbing the main session",
-  "emptyBody": "Type below to start, or use /btw or /btw-new in the main composer.\nThe side agent's work streams here live (text / tools / thinking / permissions).",
+  "emptyBody": "Type below to start, or use /btw to ask and /side to run tasks in the main composer; add -new to start a fresh thread.\nThe side agent's work streams here live (text / tools / thinking / permissions).",
   "emptyTranscript": "No messages yet — send the first question to start streaming.",
   "thinking": "Thinking…",
   "stoppedThread": "This side thread has stopped ({{reason}})",

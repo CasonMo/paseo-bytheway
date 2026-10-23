@@ -22,6 +22,8 @@ Each side thread is backed by a temporary agent in the same workspace:
 
 - `/btw <question>` continues the current side thread (or starts one); a bare `/btw` just
   opens the panel without creating anything; `/btw-new <question>` starts a new one;
+- A command-created or continued thread is selected immediately after the panel opens or
+  refreshes; it never waits for the 20-second thread-list poll;
 - `/side <task>` and `/side-new <task>` are the same in Build mode (tasks allowed);
 - `/fork [prompt]` clones the current session transcript into a new parallel agent;
 - The Command Center can open the ByTheWay panel and its settings;

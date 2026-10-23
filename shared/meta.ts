@@ -1,6 +1,6 @@
 /** 与 package.json / paseo-plugin.json 保持一致的插件版本号。 */
 export const PLUGIN_ID = "paseo-bytheway";
-export const PLUGIN_VERSION = "0.1.7";
+export const PLUGIN_VERSION = "0.1.8";
 
 /** 简单 semver 比较：a 是否比 b 新（忽略 prerelease）。 */
 export function isNewer(a: string, b: string): boolean {

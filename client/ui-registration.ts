@@ -1,6 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { threadsAsk } from "../shared/contracts";
 import { messages } from "./messages";
+import { requestThreadFocus } from "./panel-focus";
 import { SidekickPanel } from "./panel";
 import { SidekickSettingsScreen } from "./settings-screen";
 
@@ -81,13 +82,14 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
             return;
           }
           try {
-            await rpc(threadsAsk, {
+            const result = await rpc(threadsAsk, {
               mainAgentId: agent.id,
               question,
               mode,
               target: kind === "new" ? { kind: "new" } : { kind: "continue" },
               clientRequestId: newRequestId(),
             });
+            requestThreadFocus({ mainAgentId: agent.id, threadId: result.threadId });
           } finally {
             openPanel("bytheway", { location: "explorer" });
           }
