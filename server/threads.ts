@@ -1,4 +1,3 @@
-import type { PaseoAgent } from "@getpaseo/client";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
@@ -29,6 +28,7 @@ import * as registry from "./registry";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
 type AgentHandle = ReturnType<PaseoApi["agents"]["ref"]>;
+type PaseoAgent = NonNullable<Awaited<ReturnType<AgentHandle["refresh"]>>>["agent"];
 type WorkspaceHandle = ReturnType<PaseoApi["workspaces"]["ref"]>;
 type CreateOptions = Parameters<WorkspaceHandle["agents"]["create"]>[0];
 type Attachment = NonNullable<CreateOptions["attachments"]>[number];
