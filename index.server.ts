@@ -108,7 +108,16 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(threadsRebuild, async (input, { paseo }) => {
     const values = await readSettings();
-    return rebuildThread(paseo, values, input.threadId, input.question, input.model);
+    return rebuildThread(
+      paseo,
+      values,
+      input.threadId,
+      input.question,
+      input.model,
+      input.thinkingOptionId,
+      input.modeId,
+      input.featureValues,
+    );
   });
 
   server.handle(threadsCancel, async (input, { paseo }) => {

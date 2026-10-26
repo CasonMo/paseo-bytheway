@@ -8,6 +8,9 @@ import { z } from "zod";
 export const threadModeSchema = z.enum(["ask", "work"]);
 export type ThreadMode = z.infer<typeof threadModeSchema>;
 
+export const featureValuesSchema = z.record(z.string(), z.unknown());
+export type FeatureValues = z.infer<typeof featureValuesSchema>;
+
 export const threadStateSchema = z.enum(["open", "stopped", "dead"]);
 export type ThreadState = z.infer<typeof threadStateSchema>;
 
@@ -30,7 +33,9 @@ export const threadViewSchema = z.object({
   mode: threadModeSchema,
   provider: z.string(),
   model: z.string(),
+  modeId: z.string().nullable(),
   thinkingOptionId: z.string().nullable(),
+  featureValues: featureValuesSchema,
   state: threadStateSchema,
   stateReason: z.string().nullable(),
   pinned: z.boolean(),
@@ -73,7 +78,9 @@ export const threadsAsk = defineRpc({
       ])
       .default({ kind: "continue" }),
     model: z.string().min(1).max(200).optional(),
+    modeId: z.string().min(1).max(200).nullable().optional(),
     thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
+    featureValues: featureValuesSchema.optional(),
     /** 换模型/模式新开线程时：接续的旧线程 agent id（新线程会读取其上下文）。 */
     continuationOf: z.string().min(1).optional(),
     clientRequestId: z.string().min(1).max(200).optional(),
@@ -117,6 +124,9 @@ export const threadsRebuild = defineRpc({
     threadId: z.string().min(1),
     question: z.string().trim().max(8000).optional(),
     model: z.string().min(1).max(200).optional(),
+    modeId: z.string().min(1).max(200).nullable().optional(),
+    thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
+    featureValues: featureValuesSchema.optional(),
   }),
   output: z.object({ threadId: z.string(), agentId: z.string() }),
 });

@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ThreadMode, ThreadRecord } from "../shared/types";
+import type { ThreadRecord } from "../shared/types";
 
 /**
  * 线程注册表：只持久化线程元数据（不存 Q&A 正文）。
@@ -38,7 +38,9 @@ export function ensureLoaded(): Promise<void> {
         threads.set(record.id, {
           ...record,
           pinned: record.pinned ?? false,
+          modeId: record.modeId ?? null,
           thinkingOptionId: record.thinkingOptionId ?? null,
+          featureValues: record.featureValues ?? {},
           stateReason: record.stateReason ?? null,
           syncCursor: record.syncCursor ?? null,
         });
@@ -112,9 +114,9 @@ export function removeThread(threadId: string): void {
 }
 
 /** 最近活跃的 open 线程（供 /btw 续聊）。 */
-export function findLastActive(mainAgentId: string, mode: ThreadMode): ThreadRecord | undefined {
+export function findLastActive(mainAgentId: string): ThreadRecord | undefined {
   return [...threads.values()]
-    .filter((thread) => thread.mainAgentId === mainAgentId && thread.mode === mode && thread.state === "open")
+    .filter((thread) => thread.mainAgentId === mainAgentId && thread.state === "open")
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 

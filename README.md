@@ -6,13 +6,15 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 ## 功能
 
 - **实时执行流**：侧聊 agent 的流式文本、思考、工具调用、待办、turn 状态与用量实时直播（不轮询）。
-- **线程化**：`/btw` 续聊、`/btw-new` 新开；`/side` / `/side-new` 为 Build（干活）模式；`/fork` 克隆当前会话。
+- **线程化**：`/btw` 续聊、`/btw-new` 新开；新线程默认继承主会话原有 Mode/思考/Features；`/fork` 克隆当前会话。
 - **上下文**：默认「agent 直连」——侧聊通过 Paseo 内置工具按需读取主会话最新进展；首轮附轻量快照；工具不可用时自动降级为被动增量同步。
 - **转录零落盘**：Paseo agent 转录是唯一数据源；插件只持久化线程注册表（`~/.paseo/plugin-data/paseo-bytheway/`）。
-- **权限内联处理**：新线程继承主会话的思考档与 provider features（如 opencode `auto_accept`），权限默认与主会话一致；面板内批准/拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后统一提交）；默认跟随主会话由 Paseo 原生处理，可选策略（询问+超时自动拒绝 / 自动放行只读 / 全部拒绝）。
+- **权限内联处理**：新线程继承主会话的 Mode、思考档与 provider features（如 opencode `auto_accept`），权限默认与主会话一致；面板内批准/拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后统一提交）；默认跟随主会话由 Paseo 原生处理，可选策略（询问+超时自动拒绝 / 自动放行只读 / 全部拒绝）。
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
 - **运行中**：按钮互斥——回答中只显示「停止」，空闲时只显示「发送」；回答中按 Enter 发送会打断当前回答、重新开始一轮（toast 提示）。
 - **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。
+- **Provider 原生控制**：不再用 Chat/Build 归组，而是动态读取 Paseo 的 modes、thinkingOptions 和 features。Codex、Claude、OpenCode、Pi、Qoder 等 provider 返回什么，侧聊就显示什么；没有对应能力的 provider 自动隐藏控件。
+- **思考模式**：输入区「思考」按钮默认跟随主会话；同模型时继承主会话当前思考档，换模型时使用目标模型默认档。已有线程原地切换，subagent ID 不变。
 - **体验**：AI 线程标题（可配置标题模型）、手动重命名、线程标签 ✕ 一键关闭归档、线程列表一键复制 Agent ID、状态圆点、Tab 线程切换、会话顶部显示最初提问，智能贴底滚动（跟随流式输出；上翻即停，滚回底部附近或点「回到底部」恢复）、底部「提 Issue / 提功能」直达 GitHub、界面语言跟随 Paseo App、宿主 Markdown 正文、更新横幅；桌面端输入框 Enter 发送、Shift+Enter 换行（与 Paseo 主输入框一致）。
 
 ## 命令
@@ -21,8 +23,6 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 |---|---|
 | `/btw <问题>` | 继续当前侧聊线程（无则新开），并打开面板；不带问题时仅打开面板 |
 | `/btw-new <问题>` | 新开一条侧聊线程 |
-| `/side <任务>` | 继续当前 Build 线程 |
-| `/side-new <任务>` | 新开一条 Build 线程 |
 | `/fork [提示词]` | 克隆当前会话转录为新并行 agent |
 
 命令创建或续聊线程后，面板会立即刷新并选中对应线程。也可以从 Command Center 打开「ByTheWay 侧聊」面板或「ByTheWay 设置」。
@@ -35,6 +35,8 @@ npm run typecheck   # TypeScript
 npm test            # vitest（reducer / 转换逻辑 / 发送行为）
 npm run smoke       # 端到端：直连本地 daemon（需 PASEO_PASSWORD 或 ~/.paseo/local-credential）
 npm run busy-behavior-check  # 运行中发送：busy→interrupt 当前轮并 toast 提示（需本地 daemon）
+npm run thinking-switch-check # 校验同一 subagent 的思考档真实切换（需本地 daemon）
+npm run provider-controls-check # 校验动态 mode/feature 原地切换（需本地 daemon）
 
 paseo plugin install /path/to/paseo-bytheway
 paseo plugin reload paseo-bytheway

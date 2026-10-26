@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { featuresToValues, pickBuildMode, type PaseoApi } from "./context";
+import {
+  buildSystemPrompt,
+  chooseUnattendedMode,
+  featuresToValues,
+  type PaseoApi,
+} from "./context";
 
 describe("featuresToValues", () => {
   it("提取 toggle/select 的值并跳过未设置的项", () => {
@@ -18,44 +23,55 @@ describe("featuresToValues", () => {
   });
 });
 
-function paseoWithModes(modes: Array<{ id: string; label: string }>): PaseoApi {
-  return { providers: { listModes: async () => ({ modes }) } } as unknown as PaseoApi;
-}
-
-describe("pickBuildMode", () => {
-  it("优先匹配 build/code/exec 模式的 id 或 label", async () => {
-    const paseo = paseoWithModes([
-      { id: "plan", label: "Plan" },
-      { id: "build", label: "Build" },
-    ]);
-    expect(await pickBuildMode(paseo, "opencode")).toBe("build");
+describe("pickUnattendedMode", () => {
+  it("优先选择 danger 级完全放行模式", () => {
+    expect(
+      chooseUnattendedMode([
+        { id: "default", label: "Always Ask", colorTier: "safe" },
+        { id: "bypassPermissions", label: "Bypass", colorTier: "dangerous" },
+      ]),
+    ).toBe("bypassPermissions");
   });
 
-  it("无匹配时回退到第一个非 plan/read 模式", async () => {
-    const paseo = paseoWithModes([
-      { id: "plan", label: "Plan" },
-      { id: "readonly", label: "Read only" },
-      { id: "default", label: "Always Ask" },
-    ]);
-    expect(await pickBuildMode(paseo, "claude")).toBe("default");
+  it("回退到 auto / build 类可执行模式", () => {
+    expect(
+      chooseUnattendedMode([
+        { id: "plan", label: "Plan" },
+        { id: "auto", label: "Auto mode" },
+      ]),
+    ).toBe("auto");
+    expect(
+      chooseUnattendedMode([
+        { id: "plan", label: "Plan" },
+        { id: "build", label: "Build" },
+      ]),
+    ).toBe("build");
   });
 
-  it("全是 plan/read 模式时返回 undefined", async () => {
-    const paseo = paseoWithModes([
-      { id: "plan", label: "Plan" },
-      { id: "read", label: "Read" },
-    ]);
-    expect(await pickBuildMode(paseo, "x")).toBeUndefined();
+  it("没有非 plan 模式时返回 undefined", () => {
+    expect(chooseUnattendedMode([{ id: "plan", label: "Plan" }])).toBeUndefined();
+  });
+});
+
+describe("buildSystemPrompt", () => {
+  it("defers to provider permissions when no explicit provider mode is selected", () => {
+    const prompt = buildSystemPrompt({
+      mainAgentId: "agent-1",
+      mode: "provider",
+      toolsAvailable: true,
+      passive: false,
+    });
+    expect(prompt).toContain("遵循当前 Paseo provider mode 的权限约束");
+    expect(prompt).not.toContain("只读建议模式");
   });
 
-  it("listModes 失败时返回 undefined", async () => {
-    const paseo = {
-      providers: {
-        listModes: async () => {
-          throw new Error("offline");
-        },
-      },
-    } as unknown as PaseoApi;
-    expect(await pickBuildMode(paseo, "x")).toBeUndefined();
+  it("keeps an explicit plan/read-only mode explicit", () => {
+    const prompt = buildSystemPrompt({
+      mainAgentId: "agent-1",
+      mode: "ask",
+      toolsAvailable: true,
+      passive: false,
+    });
+    expect(prompt).toContain("只读建议模式");
   });
 });

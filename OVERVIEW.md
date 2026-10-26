@@ -24,7 +24,12 @@ Each side thread is backed by a temporary agent in the same workspace:
   opens the panel without creating anything; `/btw-new <question>` starts a new one;
 - A command-created or continued thread is selected immediately after the panel opens or
   refreshes; it never waits for the 20-second thread-list poll;
-- `/side <task>` and `/side-new <task>` are the same in Build mode (tasks allowed);
+- The composer renders provider-native controls: Model, Thinking, Mode, and Features. Modes
+  come from `listModes`, feature controls from `listFeatures`, and thinking levels from the
+  model catalog. Unsupported controls are hidden automatically;
+- New threads default to Follow: Mode, Thinking, and Features snapshot the main session when
+  the provider/model match; otherwise the target provider/model defaults are used. Existing
+  threads update in place without replacing the backing subagent;
 - `/fork [prompt]` clones the current session transcript into a new parallel agent;
 - The Command Center can open the ByTheWay panel and its settings;
 - The threads dropdown can copy a thread's agent id to the clipboard (for handing the
@@ -47,15 +52,15 @@ Each side thread is backed by a temporary agent in the same workspace:
 
 Settings → Plugins → ByTheWay 侧聊:
 
-- Default mode (Chat / Build) and default model (follow the main session or fixed
-  provider/model); new threads also inherit the main session's thinking level and
-  provider feature toggles (e.g. OpenCode auto-accept) when the model/provider match
+- Default model (follow the main session or fixed provider/model). Mode, thinking, and
+  provider feature controls are discovered from the active provider/model; new threads
+  follow the main session when compatible and otherwise use provider/model defaults
 - New threads can pick any provider; existing threads switch models in place within their own provider only
 - First-turn snapshot depth, action digest, context fallback
 - Attach side agents to the main session as children
 - AI thread titles and the title-generation model
 - Permission policy (follow the main session / ask + auto-deny timeout / auto-allow read-only / deny all)
-- Concurrency limits (Chat / Build / total) and the experimental cancel switch
+- Total concurrency limit and the experimental cancel switch
 
 No account or extra keys are required; the plugin reuses the agent providers configured
 in Paseo. Requires Paseo 0.13.0-beta.1 or later. The daemon runs on any platform Paseo supports,
@@ -75,7 +80,7 @@ and the interface works on desktop, web, and mobile clients.
   `raw.githubusercontent.com` to check for updates (version metadata only; no session data
   is uploaded). The feedback link in the panel opens this repository's GitHub issue form
   in your external browser, only when you click it.
-- Permissions: new side agents inherit the main session's thinking level and provider
+- Permissions: new side agents inherit the main session's mode, thinking level, and provider
   feature toggles (for example OpenCode's auto-accept) at creation, so permission
   behaviour matches the main session by default. Tool permission requests from side
   agents appear inline in the panel for approval or denial; question-type requests render
@@ -92,12 +97,12 @@ and the interface works on desktop, web, and mobile clients.
 - Threads are bound to the daemon and main session that created them. If the main session
   is archived, threads are marked stopped and can be rebuilt to continue;
 - Existing threads switch models in place within their own provider (the provider is
-  fixed when the thread is created; start a new thread to use another provider).
-  Switching Chat/Build mode also switches in place: the thread's agent mode is switched
-  for real (via a short-lived helper agent calling Paseo's set_agent_mode), and the next
-  message carries a mode-switch note; if the switch fails the message is not sent and the
+  fixed when the thread is created; start a new thread to use another provider). Mode,
+  thinking, and provider feature changes also apply in place through a short-lived helper
+  agent calling Paseo's `update_agent`; the plugin refreshes the same subagent and verifies
+  the requested values before sending. If any switch fails, the message is not sent and the
   panel shows why;
-- AI titles, the experimental cancel, and model/mode switching create a short-lived helper
-  agent that archives itself when done (it may appear briefly in the agent list);
-- Running side chats are limited by the configured concurrency caps; requests beyond the
-  cap are rejected with a hint.
+- AI titles, the experimental cancel, and model/thinking/mode switching create a short-lived
+  helper agent that archives itself when done (it may appear briefly in the agent list);
+- Running side chats are limited by the configured total concurrency cap; requests beyond
+  it are rejected with a hint.

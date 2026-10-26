@@ -1,9 +1,19 @@
+import type { PaseoAgent } from "@getpaseo/client";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
 import type { SidekickSettings } from "../shared/settings";
 import type { ThreadMode, ThreadRecord } from "../shared/types";
 import { resolveSendBehavior, type AppliedBehavior } from "../shared/send-behavior";
+import { inheritedThinkingOptionId, resolveRequestedThinkingOptionId } from "../shared/thinking";
+import {
+  defaultProviderModeId,
+  inheritedProviderModeId,
+  sameFeatureValues,
+  sanitizeFeatureValues,
+  snapshotFeatureValues,
+  threadModeForProviderMode,
+} from "../shared/controls";
 import {
   buildIncrementText,
   buildSnapshotText,
@@ -11,8 +21,7 @@ import {
   detectToolsAvailable,
   featuresToValues,
   fetchTranscriptTail,
-  pickBuildMode,
-  pickReadOnlyMode,
+  pickUnattendedMode,
   PASSIVE_SNAPSHOT_BUDGET,
   PASSIVE_SNAPSHOT_MESSAGES,
 } from "./context";
@@ -26,14 +35,6 @@ type Attachment = NonNullable<CreateOptions["attachments"]>[number];
 type OutgoingTextAttachment = { type: "text"; mimeType: "text/plain"; title: string; text: string };
 
 const TITLE_MAX = 60;
-
-/** 就地模式切换时附带的指令（写在消息开头，覆盖创建时的系统提示约束）。 */
-const MODE_SWITCH_PROMPTS = {
-  toWork:
-    "[Mode switch → Build] You may now perform the actions the task needs; the earlier read-only advice constraint no longer applies. Keep changes minimal.",
-  toAsk:
-    "[Mode switch → Chat] Answer as read-only advice: do not modify files and do not run commands with side effects.",
-} as const;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -54,6 +55,17 @@ function splitModel(value: string): { provider: string | null; model: string } {
   return slash > 0 ? { provider: value.slice(0, slash), model: value.slice(slash + 1) } : { provider: null, model: value };
 }
 
+async function promptModeForProviderMode(
+  paseo: PaseoApi,
+  provider: string,
+  modeId: string | null,
+): Promise<ThreadMode | "provider"> {
+  if (!modeId) return "provider";
+  const result = await paseo.providers.listModes(provider).catch(() => null);
+  const mode = result?.modes?.find((entry) => entry.id === modeId);
+  return mode ? threadModeForProviderMode(mode) : "provider";
+}
+
 interface ContextModeInfo {
   toolsAvailable: boolean;
   passive: boolean;
@@ -69,7 +81,7 @@ async function resolveContextMode(paseo: PaseoApi, settings: SidekickSettings): 
 /* 并发门控                                                              */
 /* ------------------------------------------------------------------ */
 
-async function assertConcurrency(paseo: PaseoApi, settings: SidekickSettings, mode: ThreadMode): Promise<void> {
+async function assertConcurrency(paseo: PaseoApi, settings: SidekickSettings): Promise<void> {
   let entries: Array<{ agent: { status: string; labels?: Record<string, string> } }> = [];
   try {
     const listing = await paseo.agents.list({
@@ -79,24 +91,8 @@ async function assertConcurrency(paseo: PaseoApi, settings: SidekickSettings, mo
   } catch {
     return; // 列表失败不阻塞发送
   }
-  let total = 0;
-  let ask = 0;
-  let work = 0;
-  for (const entry of entries) {
-    total += 1;
-    const threadId = entry.agent.labels?.["sidekick.thread"];
-    const record = threadId ? registry.getThread(threadId) : undefined;
-    if ((record?.mode ?? "ask") === "work") work += 1;
-    else ask += 1;
-  }
-  if (total >= settings.maxConcurrentTotal) {
+  if (entries.length >= settings.maxConcurrentTotal) {
     throw new Error(`侧聊总并发已达上限（${settings.maxConcurrentTotal}），请等待现有侧聊完成`);
-  }
-  if (mode === "work" && work >= settings.maxConcurrentWork) {
-    throw new Error(`Build 并发已达上限（${settings.maxConcurrentWork}），请稍后再试`);
-  }
-  if (mode === "ask" && ask >= settings.maxConcurrentAsk) {
-    throw new Error(`Chat 并发已达上限（${settings.maxConcurrentAsk}），请稍后再试`);
   }
 }
 
@@ -110,7 +106,9 @@ export interface AskInput {
   mode: ThreadMode;
   target: { kind: "continue"; threadId?: string } | { kind: "new" };
   model?: string;
+  modeId?: string | null;
   thinkingOptionId?: string | null;
+  featureValues?: Record<string, unknown>;
   continuationOf?: string;
   clientRequestId?: string;
 }
@@ -155,35 +153,43 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
 
   const contextMode = await resolveContextMode(paseo, settings);
 
-  // 跟随主会话：同 provider 且同模型时继承思考档，同 provider 时继承 provider features（如 opencode auto_accept）
-  const inheritedThinkingOptionId =
-    input.thinkingOptionId ??
-    (provider === main.provider && model === (main.model ?? "")
-      ? main.effectiveThinkingOptionId ?? main.thinkingOptionId ?? null
-      : null);
+  // 默认跟随主会话：同 provider/model 时继承思考档；换模型时使用目标模型默认档。
+  const inheritedThinking = inheritedThinkingOptionId(provider, model, main);
+  const selectedThinkingOptionId = resolveRequestedThinkingOptionId(
+    input.thinkingOptionId,
+    inheritedThinking,
+  );
   const inheritedFeatureValues = provider === main.provider ? featuresToValues(main.features) : {};
+  const selectedFeatureValues =
+    input.featureValues !== undefined ? input.featureValues : inheritedFeatureValues;
+  // 默认 follow 主会话：同 provider/model 时连 mode 一起继承；否则使用 provider 默认。
+  const requestedModeId =
+    input.modeId !== undefined
+      ? input.modeId
+      : inheritedProviderModeId(provider, model, main);
 
   if (input.target.kind === "continue") {
     const thread = input.target.threadId
       ? registry.getThread(input.target.threadId)
-      : registry.findLastActive(input.mainAgentId, input.mode);
+      : registry.findLastActive(input.mainAgentId);
     if (thread) {
       if (thread.state !== "open") {
         throw new Error("该侧聊已停止：可「重建并继续」，或用 /btw-new 新开线程");
       }
-      return continueThread(paseo, settings, thread, input, contextMode);
+      return continueThread(paseo, settings, thread, input, contextMode, main);
     }
   }
 
-  await assertConcurrency(paseo, settings, input.mode);
+  await assertConcurrency(paseo, settings);
   const record = await createThread(paseo, settings, {
     mainAgentId: input.mainAgentId,
     workspaceId: main.workspaceId,
     provider,
     model,
     mode: input.mode,
-    thinkingOptionId: inheritedThinkingOptionId,
-    featureValues: inheritedFeatureValues,
+    modeId: requestedModeId,
+    thinkingOptionId: selectedThinkingOptionId,
+    featureValues: selectedFeatureValues,
     question: input.question,
     contextMode,
     seedFromAgentId: input.continuationOf ?? null,
@@ -198,6 +204,7 @@ async function continueThread(
   thread: ThreadRecord,
   input: AskInput,
   contextMode: ContextModeInfo,
+  main: PaseoAgent,
 ): Promise<AskResult> {
   const handle: AgentHandle = paseo.agents.ref(thread.agentId);
   const snapshot = await handle.refresh();
@@ -248,41 +255,75 @@ async function continueThread(
     }
   }
 
-  // 模型切换：仅限同一 Provider，通过辅助 agent 调 MCP update_agent 原地生效
+  // 模型 / 思考 / mode / feature 变更：通过辅助 agent 调 MCP update_agent 原地生效
   let nextModel = thread.model;
+  let nextThinkingOptionId = thread.thinkingOptionId;
+  let nextModeId = agent.currentModeId ?? thread.modeId;
+  const actualFeatureValues = snapshotFeatureValues(agent.features);
+  let nextFeatureValues =
+    Object.keys(actualFeatureValues).length > 0 ? actualFeatureValues : thread.featureValues;
+  const runtimeChanges: {
+    model?: string;
+    thinkingOptionId?: string | null;
+    modeId?: string;
+    features?: Record<string, unknown>;
+  } = {};
+
   if (input.model) {
     const desired = splitModel(input.model);
     if (desired.provider && desired.provider !== thread.provider) {
       throw new Error("已有侧聊不能切换 provider：请用 /btw-new 新开线程再选其它 provider");
     }
     if (desired.model !== thread.model) {
-      const switched = await switchThreadModel(paseo, thread, desired.model);
-      if (!switched.ok) {
-        throw new Error(`模型切换失败：${switched.error ?? "未知原因"}`);
-      }
       nextModel = desired.model;
-      console.log(`[bytheway] thread ${thread.id} model switched to ${nextModel}`);
+      runtimeChanges.model = nextModel;
     }
   }
 
-  // 就地模式切换：先真正切换 agent 的 modeId，再随消息附上切换指令并更新线程模式
-  const modeChanged = input.mode !== thread.mode;
-  let messageText = input.question;
-  if (modeChanged) {
-    const targetModeId =
-      input.mode === "ask"
-        ? await pickReadOnlyMode(paseo, thread.provider)
-        : await pickBuildMode(paseo, thread.provider);
-    if (targetModeId) {
-      const switched = await switchThreadMode(paseo, thread, targetModeId);
-      if (!switched.ok) {
-        throw new Error(`模式切换失败：${switched.error ?? "未知原因"}`);
-      }
-      console.log(`[bytheway] thread ${thread.id} agent mode switched to ${targetModeId}`);
-    }
-    const directive = input.mode === "work" ? MODE_SWITCH_PROMPTS.toWork : MODE_SWITCH_PROMPTS.toAsk;
-    messageText = `${directive}\n\n${input.question}`;
+  const modelChanged = nextModel !== thread.model;
+  const thinkingFallback = modelChanged
+    ? inheritedThinkingOptionId(thread.provider, nextModel, main)
+    : thread.thinkingOptionId;
+  nextThinkingOptionId = resolveRequestedThinkingOptionId(input.thinkingOptionId, thinkingFallback);
+  const shouldApplyThinking = input.thinkingOptionId !== undefined || modelChanged;
+  if (shouldApplyThinking) runtimeChanges.thinkingOptionId = nextThinkingOptionId;
+
+  // provider modeId 是唯一模式来源；null 表示解析为当前 provider 默认 mode。
+  if (input.modeId === null) {
+    const modes = await paseo.providers.listModes(thread.provider).catch(() => null);
+    nextModeId = defaultProviderModeId(modes?.modes ?? []) ?? nextModeId;
+  } else if (input.modeId !== undefined) {
+    nextModeId = input.modeId;
   }
+  const messageText = input.question;
+  if (nextModeId && nextModeId !== agent.currentModeId) runtimeChanges.modeId = nextModeId;
+
+  if (input.featureValues !== undefined) {
+    nextFeatureValues = input.featureValues;
+    if (!sameFeatureValues(nextFeatureValues, actualFeatureValues)) {
+      runtimeChanges.features = nextFeatureValues;
+    }
+  }
+
+  if (Object.keys(runtimeChanges).length > 0) {
+    const switched = await switchThreadRuntime(paseo, thread, runtimeChanges);
+    if (!switched.ok) {
+      throw new Error(`运行配置切换失败：${switched.error ?? "未知原因"}`);
+    }
+    if (runtimeChanges.model) console.log(`[bytheway] thread ${thread.id} model switched to ${nextModel}`);
+    if (shouldApplyThinking) {
+      console.log(`[bytheway] thread ${thread.id} thinking switched to ${nextThinkingOptionId ?? "default"}`);
+    }
+    if (runtimeChanges.modeId) {
+      console.log(`[bytheway] thread ${thread.id} agent mode switched to ${runtimeChanges.modeId}`);
+    }
+    if (runtimeChanges.features) {
+      console.log(`[bytheway] thread ${thread.id} features updated`);
+    }
+  }
+
+  const promptMode = await promptModeForProviderMode(paseo, thread.provider, nextModeId);
+  const nextThreadMode = promptMode === "provider" ? input.mode : promptMode;
 
   const sendOptions = {
     ...(attachments.length > 0 ? { attachments } : {}),
@@ -291,12 +332,15 @@ async function continueThread(
   await handle.send(messageText, sendOptions);
   registry.upsertThread({
     ...thread,
-    mode: modeChanged ? input.mode : thread.mode,
+    mode: nextThreadMode,
     model: nextModel,
+    modeId: nextModeId,
+    thinkingOptionId: nextThinkingOptionId,
+    featureValues: nextFeatureValues,
     updatedAt: Date.now(),
   });
   console.log(
-    `[bytheway] thread ${thread.id} ${modeChanged ? `mode switched to ${input.mode}` : "continued"} (${behavior})`,
+    `[bytheway] thread ${thread.id} ${nextThreadMode !== thread.mode ? `mode switched to ${nextThreadMode}` : "continued"} (${behavior})`,
   );
   return { threadId: thread.id, agentId: thread.agentId, created: false, behavior };
 }
@@ -307,6 +351,7 @@ interface CreateThreadInput {
   provider: string;
   model: string;
   mode: ThreadMode;
+  modeId: string | null;
   thinkingOptionId: string | null;
   /** 从主会话继承的 provider features（如 opencode auto_accept）。 */
   featureValues: Record<string, unknown>;
@@ -321,13 +366,11 @@ async function createThread(
   input: CreateThreadInput,
 ): Promise<ThreadRecord> {
   const threadId = registry.newThreadId();
-  const modeId =
-    input.mode === "ask"
-      ? await pickReadOnlyMode(paseo, input.provider)
-      : await pickBuildMode(paseo, input.provider);
+  const promptMode = await promptModeForProviderMode(paseo, input.provider, input.modeId);
+  const effectiveThreadMode = promptMode === "provider" ? input.mode : promptMode;
   const systemPrompt = buildSystemPrompt({
     mainAgentId: input.mainAgentId,
-    mode: input.mode,
+    mode: promptMode,
     toolsAvailable: input.contextMode.toolsAvailable,
     passive: input.contextMode.passive,
   });
@@ -390,11 +433,11 @@ async function createThread(
     }
   }
 
-  const title = `${input.mode === "work" ? "[侧聊·Build]" : "[侧聊]"} ${truncateOneLine(input.question)}`;
+  const title = `[侧聊] ${truncateOneLine(input.question)}`;
   const handle = await paseo.workspaces.ref(input.workspaceId).agents.create({
     config: {
       provider: input.model ? `${input.provider}/${input.model}` : input.provider,
-      ...(modeId ? { modeId } : {}),
+      ...(input.modeId ? { modeId: input.modeId } : {}),
       ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
       ...(Object.keys(input.featureValues).length > 0 ? { featureValues: input.featureValues } : {}),
       systemPrompt,
@@ -406,6 +449,13 @@ async function createThread(
     ...(settings.attachToMain ? { parent: input.mainAgentId } : {}),
   });
 
+  const createdSnapshot = await paseo.agents.ref(handle.id).refresh().catch(() => null);
+  const actualModeId = createdSnapshot?.agent.currentModeId ?? input.modeId;
+  const actualFeatures = createdSnapshot
+    ? snapshotFeatureValues(createdSnapshot.agent.features)
+    : {};
+  const recordFeatureValues =
+    Object.keys(actualFeatures).length > 0 ? actualFeatures : input.featureValues;
   const now = Date.now();
   const record: ThreadRecord = {
     id: threadId,
@@ -413,10 +463,12 @@ async function createThread(
     workspaceId: input.workspaceId,
     agentId: handle.id,
     title,
-    mode: input.mode,
+    mode: effectiveThreadMode,
     provider: input.provider,
     model: input.model,
+    modeId: actualModeId,
     thinkingOptionId: input.thinkingOptionId,
+    featureValues: recordFeatureValues,
     state: "open",
     stateReason: null,
     pinned: false,
@@ -430,60 +482,112 @@ async function createThread(
   return record;
 }
 
-/** 通过辅助 agent 调用 MCP update_agent，把线程 agent 的模型原地切换到目标模型。 */
-async function switchThreadModel(
+/** 通过辅助 agent 调用 MCP update_agent，原地切换线程 agent 的模型和/或思考档。 */
+async function switchThreadRuntime(
   paseo: PaseoApi,
   thread: ThreadRecord,
-  modelId: string,
+  changes: {
+    model?: string;
+    thinkingOptionId?: string | null;
+    modeId?: string;
+    features?: Record<string, unknown>;
+  },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const helper = await paseo.workspaces.ref(thread.workspaceId).agents.create({
-      config: { provider: thread.model ? `${thread.provider}/${thread.model}` : thread.provider },
-      title: "[侧聊·切换模型]",
-      labels: { sidekick: "helper" },
-    });
-    try {
-      const result = await helper.run(
-        `请调用 MCP 工具 update_agent，参数 agentId="${thread.agentId}"、model="${modelId}"，把该 agent 的模型切换为 ${modelId}。成功后只回复：done；如果 update_agent 工具不可用，只回复：tool-unavailable。`,
-        { timeoutMs: 60_000 },
-      );
-      if ((result.lastMessage ?? "").toLowerCase().includes("tool-unavailable")) {
-        return { ok: false, error: "Paseo 工具不可用（需开启 daemon.mcp.injectIntoAgents）" };
-      }
-      const snapshot = await paseo.agents.ref(thread.agentId).refresh();
-      if (snapshot?.agent.model === modelId) return { ok: true };
-      return { ok: false, error: `切换未生效（当前仍是 ${snapshot?.agent.model ?? "未知"}）` };
-    } finally {
-      void helper.archive().catch(() => {});
-    }
-  } catch (error) {
-    return { ok: false, error: message(error) };
-  }
-}
+    const target = await paseo.agents.ref(thread.agentId).refresh();
+    const requestedModel = changes.model ?? thread.model;
 
-/** 通过辅助 agent 调用 MCP set_agent_mode，把线程 agent 的模式原地切换到目标 modeId。 */
-async function switchThreadMode(
-  paseo: PaseoApi,
-  thread: ThreadRecord,
-  modeId: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
+    if (changes.model !== undefined) {
+      const models = await paseo.providers.listModels(thread.provider).catch(() => null);
+      if (!models?.models?.some((model) => model.id === changes.model)) {
+        return { ok: false, error: "模型不在当前 provider 目录中" };
+      }
+    }
+    if (changes.modeId !== undefined) {
+      const modes = await paseo.providers.listModes(thread.provider).catch(() => null);
+      if (!modes?.modes?.some((mode) => mode.id === changes.modeId)) {
+        return { ok: false, error: "模式不在当前 provider 目录中" };
+      }
+    }
+    if (changes.thinkingOptionId !== undefined && changes.thinkingOptionId !== null) {
+      const models = await paseo.providers.listModels(thread.provider).catch(() => null);
+      const model = models?.models?.find((entry) => entry.id === requestedModel);
+      if (!model?.thinkingOptions?.some((option) => option.id === changes.thinkingOptionId)) {
+        return { ok: false, error: "思考档不在当前模型目录中" };
+      }
+    }
+
+    let safeFeatures = changes.features;
+    const requestedFeatures = changes.features;
+    if (requestedFeatures !== undefined) {
+      const cwd = target?.agent.cwd;
+      if (!cwd) return { ok: false, error: "无法获取工作目录以校验功能项" };
+      const featureResult = await paseo.providers
+        .listFeatures({
+          provider: `${thread.provider}/${requestedModel}`,
+          cwd,
+          ...(changes.modeId ? { modeId: changes.modeId } : {}),
+          ...(changes.thinkingOptionId ? { thinkingOptionId: changes.thinkingOptionId } : {}),
+        })
+        .catch(() => null);
+      if (!featureResult) return { ok: false, error: "无法获取当前模型的功能项目录" };
+      safeFeatures = sanitizeFeatureValues(requestedFeatures, featureResult.features ?? []);
+      if (!sameFeatureValues(safeFeatures, requestedFeatures)) {
+        return { ok: false, error: "功能项包含当前模型不支持的键或值" };
+      }
+    }
+
+    const helperModeId = await pickUnattendedMode(paseo, thread.provider);
+    const helperFeatureValues = featuresToValues(target?.agent.features);
     const helper = await paseo.workspaces.ref(thread.workspaceId).agents.create({
-      config: { provider: thread.model ? `${thread.provider}/${thread.model}` : thread.provider },
-      title: "[侧聊·切换模式]",
+      config: {
+        provider: thread.model ? `${thread.provider}/${thread.model}` : thread.provider,
+        ...(helperModeId ? { modeId: helperModeId } : {}),
+        ...(Object.keys(helperFeatureValues).length > 0 ? { featureValues: helperFeatureValues } : {}),
+      },
+      title: "[侧聊·切换运行配置]",
       labels: { sidekick: "helper" },
     });
     try {
+      const settings = JSON.stringify({
+        ...(changes.model !== undefined ? { model: changes.model } : {}),
+        ...(changes.thinkingOptionId !== undefined ? { thinkingOptionId: changes.thinkingOptionId } : {}),
+        ...(changes.modeId !== undefined ? { modeId: changes.modeId } : {}),
+        ...(safeFeatures !== undefined ? { features: safeFeatures } : {}),
+      });
       const result = await helper.run(
-        `请调用 MCP 工具 set_agent_mode，参数 agentId="${thread.agentId}"、modeId="${modeId}"，把该 agent 的模式切换为 ${modeId}。成功后只回复：done；如果 set_agent_mode 工具不可用，只回复：tool-unavailable。`,
+        `请调用 MCP 工具 update_agent，参数 agentId="${thread.agentId}"、settings=${settings}，把这些运行配置应用到该 agent。成功后只回复：done；如果 update_agent 工具不可用，只回复：tool-unavailable。`,
         { timeoutMs: 60_000 },
       );
       if ((result.lastMessage ?? "").toLowerCase().includes("tool-unavailable")) {
         return { ok: false, error: "Paseo 工具不可用（需开启 daemon.mcp.injectIntoAgents）" };
       }
       const snapshot = await paseo.agents.ref(thread.agentId).refresh();
-      if (snapshot?.agent.currentModeId === modeId) return { ok: true };
-      return { ok: false, error: `切换未生效（当前仍是 ${snapshot?.agent.currentModeId ?? "未知"}）` };
+      const agent = snapshot?.agent;
+      if (changes.model !== undefined && agent?.model !== changes.model) {
+        return { ok: false, error: `模型切换未生效（当前仍是 ${agent?.model ?? "未知"}）` };
+      }
+      if (changes.modeId !== undefined && agent?.currentModeId !== changes.modeId) {
+        return { ok: false, error: `模式切换未生效（当前仍是 ${agent?.currentModeId ?? "未知"}）` };
+      }
+      if (
+        changes.thinkingOptionId !== undefined &&
+        (agent?.thinkingOptionId ?? null) !== changes.thinkingOptionId
+      ) {
+        return {
+          ok: false,
+          error: `思考档切换未生效（当前仍是 ${agent?.thinkingOptionId ?? "default"}）`,
+        };
+      }
+      if (safeFeatures !== undefined) {
+        const actualFeatures = snapshotFeatureValues(agent?.features);
+        for (const [id, value] of Object.entries(safeFeatures)) {
+          if (!Object.is(actualFeatures[id], value)) {
+            return { ok: false, error: `功能项 ${id} 切换未生效` };
+          }
+        }
+      }
+      return { ok: true };
     } finally {
       void helper.archive().catch(() => {});
     }
@@ -592,6 +696,9 @@ export async function rebuildThread(
   threadId: string,
   question?: string,
   modelOverride?: string,
+  thinkingOverride?: string | null,
+  modeOverride?: string | null,
+  featureValuesOverride?: Record<string, unknown>,
 ): Promise<{ threadId: string; agentId: string }> {
   await registry.ensureLoaded();
   const thread = registry.getThread(threadId);
@@ -613,17 +720,39 @@ export async function rebuildThread(
   // 跟随主会话：线程没记录思考档或换过模型时，从主会话重新继承；features 按 provider 继承
   const mainRef = await paseo.agents.ref(thread.mainAgentId).refresh().catch(() => null);
   const main = mainRef?.agent ?? null;
-  const inheritedThinkingOptionId =
-    (provider === thread.provider && model === thread.model ? thread.thinkingOptionId : null) ??
-    (main && provider === main.provider && model === (main.model ?? "")
-      ? main.effectiveThinkingOptionId ?? main.thinkingOptionId ?? null
-      : null);
+  const fallbackThinkingOptionId =
+    provider === thread.provider && model === thread.model
+      ? thread.thinkingOptionId
+      : main
+        ? inheritedThinkingOptionId(provider, model, main)
+        : null;
+  const nextThinkingOptionId = resolveRequestedThinkingOptionId(
+    thinkingOverride,
+    fallbackThinkingOptionId,
+  );
   const inheritedFeatureValues = main && provider === main.provider ? featuresToValues(main.features) : {};
+  const fallbackFeatureValues =
+    provider === thread.provider && model === thread.model
+      ? thread.featureValues
+      : inheritedFeatureValues;
+  const nextFeatureValues =
+    featureValuesOverride !== undefined ? featureValuesOverride : fallbackFeatureValues;
+  let nextModeId: string | null;
+  if (modeOverride !== undefined) {
+    nextModeId = modeOverride;
+  } else if (thread.modeId) {
+    nextModeId = thread.modeId;
+  } else {
+    const modes = await paseo.providers.listModes(provider).catch(() => null);
+    nextModeId = defaultProviderModeId(modes?.modes ?? []);
+  }
 
   const oldAgentId = thread.agentId;
+  const promptMode = await promptModeForProviderMode(paseo, provider, nextModeId);
+  const nextThreadMode = promptMode === "provider" ? thread.mode : promptMode;
   const systemPrompt = buildSystemPrompt({
     mainAgentId: thread.mainAgentId,
-    mode: thread.mode,
+    mode: promptMode,
     toolsAvailable: contextMode.toolsAvailable,
     passive: contextMode.passive,
   });
@@ -651,14 +780,12 @@ export async function rebuildThread(
     }
   }
 
-  const modeId =
-    thread.mode === "ask" ? await pickReadOnlyMode(paseo, provider) : await pickBuildMode(paseo, provider);
   const handle = await paseo.workspaces.ref(thread.workspaceId).agents.create({
     config: {
       provider: model ? `${provider}/${model}` : provider,
-      ...(modeId ? { modeId } : {}),
-      ...(inheritedThinkingOptionId ? { thinkingOptionId: inheritedThinkingOptionId } : {}),
-      ...(Object.keys(inheritedFeatureValues).length > 0 ? { featureValues: inheritedFeatureValues } : {}),
+      ...(nextModeId ? { modeId: nextModeId } : {}),
+      ...(nextThinkingOptionId ? { thinkingOptionId: nextThinkingOptionId } : {}),
+      ...(Object.keys(nextFeatureValues).length > 0 ? { featureValues: nextFeatureValues } : {}),
       systemPrompt,
     },
     title: thread.title,
@@ -668,12 +795,20 @@ export async function rebuildThread(
     ...(settings.attachToMain ? { parent: thread.mainAgentId } : {}),
   });
 
+  const createdSnapshot = await paseo.agents.ref(handle.id).refresh().catch(() => null);
+  const actualModeId = createdSnapshot?.agent.currentModeId ?? nextModeId;
+  const actualFeatures = createdSnapshot
+    ? snapshotFeatureValues(createdSnapshot.agent.features)
+    : {};
   registry.upsertThread({
     ...thread,
     agentId: handle.id,
+    mode: nextThreadMode,
     provider,
     model,
-    thinkingOptionId: inheritedThinkingOptionId,
+    modeId: actualModeId,
+    thinkingOptionId: nextThinkingOptionId,
+    featureValues: Object.keys(actualFeatures).length > 0 ? actualFeatures : nextFeatureValues,
     state: "open",
     stateReason: null,
     updatedAt: Date.now(),
@@ -852,6 +987,23 @@ export async function refreshThreadStates(
           registry.upsertThread({ ...thread, state: "stopped", stateReason: "已归档" });
           statuses[thread.id] = "closed";
         } else {
+          const actualModeId = agent.currentModeId ?? thread.modeId;
+          const actualThinkingOptionId = agent.thinkingOptionId ?? null;
+          const actualFeatures = snapshotFeatureValues(agent.features);
+          const modeDrifted = actualModeId !== thread.modeId;
+          const thinkingDrifted = actualThinkingOptionId !== thread.thinkingOptionId;
+          const featuresDrifted =
+            Object.keys(actualFeatures).length > 0 &&
+            !sameFeatureValues(actualFeatures, thread.featureValues);
+          if (modeDrifted || thinkingDrifted || featuresDrifted) {
+            registry.upsertThread({
+              ...thread,
+              modeId: actualModeId,
+              thinkingOptionId: actualThinkingOptionId,
+              featureValues: featuresDrifted ? actualFeatures : thread.featureValues,
+              updatedAt: Date.now(),
+            });
+          }
           statuses[thread.id] = agent.status;
         }
       } catch {

@@ -80,7 +80,7 @@ repository, and that pinned artifact is what users install.
 
 1. Push the finished change to `main` after the checklist below passes.
 2. The first listing goes through the registry submission form. After a listing exists,
-   request updates with a direct pull request editing `plugins/casonmo/paseo-bytheway.json`:
+   request updates with a direct pull request editing `plugins/casonmo/bytheway.json`:
    bump both `artifact.commit` and `repository.commit` to the new `main` hash (and update
    `listing.media` raw URLs for any media change). Do not open a submission issue for
    updates — the direct PR path is validated and merged automatically by the registry bot.

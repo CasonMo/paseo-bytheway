@@ -66,14 +66,13 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
   const askCommand = (
     name: string,
     description: ReturnType<typeof messages.message>,
-    mode: "ask" | "work",
     kind: "continue" | "new",
   ) => {
     cleanups.push(
       context.addSlashCommand({
         name,
         description,
-        argumentHint: mode === "work" ? messages.message("reg.argTask") : messages.message("reg.argQuestion"),
+        argumentHint: messages.message("reg.argQuestion"),
         context: "agent",
         async onSubmit({ args, agent, rpc, openPanel }) {
           const question = args.trim();
@@ -85,7 +84,7 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
             const result = await rpc(threadsAsk, {
               mainAgentId: agent.id,
               question,
-              mode,
+              mode: "ask",
               target: kind === "new" ? { kind: "new" } : { kind: "continue" },
               clientRequestId: newRequestId(),
             });
@@ -98,10 +97,8 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
     );
   };
 
-  askCommand("btw", messages.message("reg.slashBtw"), "ask", "continue");
-  askCommand("btw-new", messages.message("reg.slashBtwNew"), "ask", "new");
-  askCommand("side", messages.message("reg.slashSide"), "work", "continue");
-  askCommand("side-new", messages.message("reg.slashSideNew"), "work", "new");
+  askCommand("btw", messages.message("reg.slashBtw"), "continue");
+  askCommand("btw-new", messages.message("reg.slashBtwNew"), "new");
 
   cleanups.push(
     context.addSlashCommand({

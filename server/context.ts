@@ -1,6 +1,7 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { ThreadMode } from "../shared/types";
+import { snapshotFeatureValues } from "../shared/controls";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
 type AgentHandle = ReturnType<PaseoApi["agents"]["ref"]>;
@@ -239,7 +240,7 @@ export function buildIncrementText(
 
 export interface SystemPromptOptions {
   mainAgentId: string;
-  mode: ThreadMode;
+  mode: ThreadMode | "provider";
   toolsAvailable: boolean;
   passive: boolean;
 }
@@ -254,7 +255,9 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   const modeLine =
     mode === "ask"
       ? "你处于只读建议模式：不要修改文件、不要执行有副作用的命令；可以读取文件与搜索，用于给出准确的回答。"
-      : "你可以执行任务所需的操作；保持改动最小、聚焦，不做无关重构。";
+      : mode === "provider"
+        ? "遵循当前 Paseo provider mode 的权限约束；不要尝试绕过该模式的限制。"
+        : "你可以执行任务所需的操作；保持改动最小、聚焦，不做无关重构。";
   return [
     "你是 Paseo「侧聊（ByTheWay）」会话：用户在自己的主会话之外向你提出旁路问题或小任务；你的回答只展示给用户，不会自动写入主会话。",
     contextLine,
@@ -267,18 +270,11 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
 /* 主会话 agent 配置继承                                                  */
 /* ------------------------------------------------------------------ */
 
-type AgentFeatureLike = { id: string; value?: boolean | string | null };
-
-/** 提取主会话快照 features（toggle/select）的值，供 create 时 featureValues 继承；跳过未设置的项。 */
+/** 提取主会话/agent 快照 features 的原始值；实现由 shared/controls 统一维护。 */
 export function featuresToValues(
-  features: readonly AgentFeatureLike[] | null | undefined,
+  features: ReadonlyArray<{ id: string; value?: boolean | string | null }> | null | undefined,
 ): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
-  for (const feature of features ?? []) {
-    if (feature.value === null || feature.value === undefined) continue;
-    values[feature.id] = feature.value;
-  }
-  return values;
+  return snapshotFeatureValues(features);
 }
 
 /* ------------------------------------------------------------------ */
@@ -302,31 +298,29 @@ export async function detectToolsAvailable(paseo: PaseoApi): Promise<boolean> {
   }
 }
 
-/** 选择 provider 的只读 / 计划模式。 */
-export async function pickReadOnlyMode(paseo: PaseoApi, provider: string): Promise<string | undefined> {
-  try {
-    const result = await paseo.providers.listModes(provider);
-    const modes = result.modes ?? [];
-    const plan = modes.find((mode) => /plan|read/i.test(mode.id) || /plan|read/i.test(mode.label));
-    return plan?.id;
-  } catch {
-    return undefined;
-  }
-}
+type ModeChoice = { id: string; label: string; colorTier?: string };
 
 function isPlanMode(mode: { id: string; label: string }): boolean {
-  return /plan|read/i.test(mode.id) || /plan|read/i.test(mode.label);
+  return /plan|read.?only|read-only/i.test(`${mode.id} ${mode.label}`);
 }
 
-/** 选择 provider 的执行（非 plan/read）模式；无匹配时返回 undefined（provider 默认）。 */
-export async function pickBuildMode(paseo: PaseoApi, provider: string): Promise<string | undefined> {
+/** 为只执行 Paseo 管理工具的临时辅助 agent 选择无人值守模式。 */
+export function chooseUnattendedMode(modes: readonly ModeChoice[]): string | undefined {
+  const dangerous = modes.find((mode) => mode.colorTier === "dangerous");
+  if (dangerous) return dangerous.id;
+  const bypass = modes.find((mode) => /bypass|full.?access|yolo/i.test(`${mode.id} ${mode.label}`));
+  if (bypass) return bypass.id;
+  const auto = modes.find((mode) => /auto/i.test(`${mode.id} ${mode.label}`));
+  if (auto) return auto.id;
+  const build = modes.find((mode) => /build|accept|edit|code|exec/i.test(`${mode.id} ${mode.label}`));
+  if (build) return build.id;
+  return modes.find((mode) => !isPlanMode(mode))?.id;
+}
+
+export async function pickUnattendedMode(paseo: PaseoApi, provider: string): Promise<string | undefined> {
   try {
     const result = await paseo.providers.listModes(provider);
-    const modes = result.modes ?? [];
-    const build =
-      modes.find((mode) => /build|code|exec/i.test(mode.id) || /build|code|exec/i.test(mode.label)) ??
-      modes.find((mode) => !isPlanMode(mode));
-    return build?.id;
+    return chooseUnattendedMode(result.modes ?? []);
   } catch {
     return undefined;
   }

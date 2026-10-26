@@ -5,10 +5,9 @@ import { z } from "zod";
 export const sidekickSettings = defineSettings({
   id: "bytheway-settings",
   scope: "host",
-  version: 2,
+  version: 3,
   schema: z.object({
-    // 新线程默认
-    defaultMode: z.enum(["ask", "work"]).default("ask"),
+    // 新线程默认模型；Mode/Thinking/Features 跟随主会话或 provider 默认。
     defaultModel: z.string().default("follow"),
 
     // 上下文
@@ -27,15 +26,20 @@ export const sidekickSettings = defineSettings({
     permissionTimeoutWriteMin: z.number().int().min(0).max(1440).default(30),
 
     // 并发与停止
-    maxConcurrentAsk: z.number().int().min(1).max(8).default(3),
-    maxConcurrentWork: z.number().int().min(1).max(8).default(2),
     maxConcurrentTotal: z.number().int().min(1).max(16).default(8),
     experimentalCancel: z.boolean().default(true),
   }),
   migrate: (values, fromVersion) => {
-    if (fromVersion < 2 && values && typeof values === "object") {
-      const v = values as { permissionPolicy?: string };
-      if (v.permissionPolicy === "ask") return { ...v, permissionPolicy: "follow" };
+    if (values && typeof values === "object") {
+      let next = values as Record<string, unknown>;
+      if (fromVersion < 2 && next.permissionPolicy === "ask") {
+        next = { ...next, permissionPolicy: "follow" };
+      }
+      if (fromVersion < 3) {
+        const { defaultMode: _defaultMode, maxConcurrentAsk: _ask, maxConcurrentWork: _work, ...rest } = next;
+        next = rest;
+      }
+      return next;
     }
     return values;
   },

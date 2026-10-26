@@ -18,8 +18,6 @@ const intRanges: Partial<Record<FieldKey, { min: number; max: number }>> = {
   snapshotDepth: { min: 0, max: 50 },
   permissionTimeoutReadMin: { min: 0, max: 1440 },
   permissionTimeoutWriteMin: { min: 0, max: 1440 },
-  maxConcurrentAsk: { min: 1, max: 8 },
-  maxConcurrentWork: { min: 1, max: 8 },
   maxConcurrentTotal: { min: 1, max: 16 },
 };
 
@@ -107,15 +105,6 @@ export function SidekickSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       {saveError ? <Text style={styles.error}>{`${t("set.saveFailed")}${saveError}`}</Text> : null}
 
       <SettingsSection title={t("set.newDefaults")} info={t("set.newDefaultsHint")}>
-        <SettingsSelect
-          label={t("set.defaultMode")}
-          value={values.defaultMode}
-          options={[
-            { label: t("set.modeAsk"), value: "ask" },
-            { label: t("set.modeWork"), value: "work" },
-          ]}
-          onValueChange={(value) => save({ defaultMode: value })}
-        />
         <SettingsInput
           label={t("set.defaultModel")}
           hint={t("set.defaultModelHint")}
@@ -201,16 +190,6 @@ export function SidekickSettingsScreen({ theme, layout }: PluginSurfaceProps) {
       </SettingsSection>
 
       <SettingsSection title={t("set.concurrency")}>
-        <SettingsInput
-          label={t("set.maxAsk")}
-          initialValue={String(values.maxConcurrentAsk)}
-          onChangeText={(text) => saveInt("maxConcurrentAsk", text)}
-        />
-        <SettingsInput
-          label={t("set.maxWork")}
-          initialValue={String(values.maxConcurrentWork)}
-          onChangeText={(text) => saveInt("maxConcurrentWork", text)}
-        />
         <SettingsInput
           label={t("set.maxTotal")}
           initialValue={String(values.maxConcurrentTotal)}

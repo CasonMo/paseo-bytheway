@@ -1,4 +1,4 @@
-import type { ThreadMode, ThreadState, ThreadView } from "./contracts";
+import type { FeatureValues, ThreadMode, ThreadState, ThreadView } from "./contracts";
 
 /** 线程注册表持久化记录（与 ThreadView 同构，另含内部字段）。 */
 export interface ThreadRecord {
@@ -10,7 +10,9 @@ export interface ThreadRecord {
   mode: ThreadMode;
   provider: string;
   model: string;
+  modeId: string | null;
   thinkingOptionId: string | null;
+  featureValues: FeatureValues;
   state: ThreadState;
   stateReason: string | null;
   pinned: boolean;
@@ -20,7 +22,7 @@ export interface ThreadRecord {
   syncCursor: { unitsSeen: number; messagesSeen: number } | null;
 }
 
-export type { ThreadMode, ThreadState, ThreadView };
+export type { FeatureValues, ThreadMode, ThreadState, ThreadView };
 
 export function toThreadView(record: ThreadRecord): ThreadView {
   const { syncCursor: _syncCursor, ...view } = record;

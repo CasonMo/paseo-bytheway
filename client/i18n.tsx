@@ -38,6 +38,19 @@ export interface UIStrings {
   emptyBody: string;
   emptyTranscript: string;
   thinking: string;
+  thinkingLabel: string;
+  thinkingFollow: string;
+  thinkingDefault: string;
+  thinkingDefaultHint: string;
+  thinkingFollowHint: string;
+  thinkingSheet: string;
+  thinkingSheetHint: string;
+  willSwitchThinking: (thinking: string) => string;
+  modeLabel: string;
+  modeSheet: string;
+  modeSheetHint: string;
+  providerDefault: string;
+  willSwitchControls: string;
   stoppedThread: (reason: string) => string;
   stoppedThreadHint: string;
 
@@ -49,7 +62,6 @@ export interface UIStrings {
   stopping: string;
   sentInterruptToast: string;
   willSendTo: (title: string) => string;
-  willSwitchMode: (mode: string) => string;
   willSwitchModel: (model: string) => string;
   providerLocked: (provider: string) => string;
   willRebuild: string;
@@ -151,6 +163,19 @@ export function useT(): UIStrings {
       emptyBody: t("emptyBody"),
       emptyTranscript: t("emptyTranscript"),
       thinking: t("thinking"),
+      thinkingLabel: t("thinkingLabel"),
+      thinkingFollow: t("thinkingFollow"),
+      thinkingDefault: t("thinkingDefault"),
+      thinkingDefaultHint: t("thinkingDefaultHint"),
+      thinkingFollowHint: t("thinkingFollowHint"),
+      thinkingSheet: t("thinkingSheet"),
+      thinkingSheetHint: t("thinkingSheetHint"),
+      willSwitchThinking: (thinking: string) => t("willSwitchThinking", { thinking }),
+      modeLabel: t("modeLabel"),
+      modeSheet: t("modeSheet"),
+      modeSheetHint: t("modeSheetHint"),
+      providerDefault: t("providerDefault"),
+      willSwitchControls: t("willSwitchControls"),
       stoppedThread: (reason: string) => t("stoppedThread", { reason }),
       stoppedThreadHint: t("stoppedThreadHint"),
 
@@ -162,7 +187,6 @@ export function useT(): UIStrings {
       stopping: t("stopping"),
       sentInterruptToast: t("sentInterruptToast"),
       willSendTo: (title: string) => t("willSendTo", { title }),
-      willSwitchMode: (mode: string) => t("willSwitchMode", { mode }),
       willSwitchModel: (model: string) => t("willSwitchModel", { model }),
       providerLocked: (provider: string) => t("providerLocked", { provider }),
       willRebuild: t("willRebuild"),
@@ -254,10 +278,19 @@ export function localizeServerMessage(messageText: string, locale: string): stri
   if (messageText.includes("不能切换 provider")) {
     return "An existing side chat cannot switch provider — start a new thread to use another provider.";
   }
-  if (messageText.includes("模型切换失败")) {
+  if (messageText.includes("运行配置切换失败")) {
+    return "Agent settings switch failed — the message was not sent. Try again from the side chat panel.";
+  }
+  if (messageText.includes("模型切换失败") || messageText.includes("模型切换未生效")) {
     return "Model switch failed — try again, or start a new thread with the desired model.";
   }
-  if (messageText.includes("模式切换失败") || messageText.includes("切换未生效")) {
+  if (messageText.includes("思考档切换未生效")) {
+    return "Thinking level switch failed — the message was not sent. Try another level or open the agent tab.";
+  }
+  if (messageText.includes("功能项") && messageText.includes("切换未生效")) {
+    return "Feature switch failed — the message was not sent. Try again from the side chat panel.";
+  }
+  if (messageText.includes("模式切换失败") || messageText.includes("模式切换未生效")) {
     return "Mode switch failed — the message was not sent. Try again, or switch the mode from the agent's native tab.";
   }
   if (messageText.includes("Paseo 工具不可用")) {
