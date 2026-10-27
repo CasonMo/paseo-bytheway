@@ -1,6 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
   contextPreview,
+  modelConfigsList,
   threadsArchive,
   threadsAsk,
   threadsCancel,
@@ -14,7 +15,14 @@ import {
 } from "./shared/contracts";
 import { sidekickSettings, type SidekickSettings } from "./shared/settings";
 import { toThreadView } from "./shared/types";
+import type { EffectiveAgentConfig } from "./shared/model-configs";
 import { registerPermissionAutoHandlers } from "./server/hooks";
+import {
+  ensureLoaded as ensureModelConfigsLoaded,
+  flushSave as flushModelConfigsSave,
+  listModelConfigs,
+  rememberModelConfig as rememberModelConfigRecord,
+} from "./server/model-configs";
 import { ensureLoaded, flushSave, listThreads } from "./server/registry";
 import {
   archiveThread,
@@ -42,6 +50,18 @@ export default function contribute(server: PluginServerContext) {
       // fall through to defaults
     }
     return sidekickSettings.schema.parse({});
+  };
+
+  const rememberEffectiveConfig = async (
+    values: SidekickSettings,
+    config: EffectiveAgentConfig,
+  ): Promise<void> => {
+    if (!values.rememberModelConfig) return;
+    await rememberModelConfigRecord(config.provider, config.model, {
+      modeId: config.modeId,
+      thinkingOptionId: config.thinkingOptionId,
+      featureValues: config.featureValues,
+    });
   };
 
   const disposePermissionHooks = registerPermissionAutoHandlers(server, readSettings);
@@ -80,10 +100,22 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
+  server.handle(modelConfigsList, async () => {
+    await ensureModelConfigsLoaded();
+    return { configs: listModelConfigs() };
+  });
+
   server.handle(threadsAsk, async (input, { paseo }) => {
     reapOnce(paseo);
     const values = await readSettings();
-    return askThread(paseo, values, input);
+    const result = await askThread(paseo, values, input);
+    await rememberEffectiveConfig(values, result.effectiveConfig);
+    return {
+      threadId: result.threadId,
+      agentId: result.agentId,
+      created: result.created,
+      behavior: result.behavior,
+    };
   });
 
   server.handle(threadsArchive, async (input, { paseo }) => {
@@ -108,7 +140,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(threadsRebuild, async (input, { paseo }) => {
     const values = await readSettings();
-    return rebuildThread(
+    const result = await rebuildThread(
       paseo,
       values,
       input.threadId,
@@ -118,6 +150,8 @@ export default function contribute(server: PluginServerContext) {
       input.modeId,
       input.featureValues,
     );
+    await rememberEffectiveConfig(values, result.effectiveConfig);
+    return { threadId: result.threadId, agentId: result.agentId };
   });
 
   server.handle(threadsCancel, async (input, { paseo }) => {
@@ -142,5 +176,6 @@ export default function contribute(server: PluginServerContext) {
   return () => {
     disposePermissionHooks();
     void flushSave().catch(() => {});
+    void flushModelConfigsSave().catch(() => {});
   };
 }

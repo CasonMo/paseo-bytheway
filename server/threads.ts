@@ -3,6 +3,7 @@ import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
 import type { SidekickSettings } from "../shared/settings";
 import type { ThreadMode, ThreadRecord } from "../shared/types";
+import type { EffectiveAgentConfig } from "../shared/model-configs";
 import { resolveSendBehavior, type AppliedBehavior } from "../shared/send-behavior";
 import { inheritedThinkingOptionId, resolveRequestedThinkingOptionId } from "../shared/thinking";
 import {
@@ -53,6 +54,16 @@ function textAttachment(title: string, text: string): OutgoingTextAttachment {
 function splitModel(value: string): { provider: string | null; model: string } {
   const slash = value.indexOf("/");
   return slash > 0 ? { provider: value.slice(0, slash), model: value.slice(slash + 1) } : { provider: null, model: value };
+}
+
+function effectiveConfigFromThread(thread: ThreadRecord): EffectiveAgentConfig {
+  return {
+    provider: thread.provider,
+    model: thread.model,
+    modeId: thread.modeId,
+    thinkingOptionId: thread.thinkingOptionId,
+    featureValues: thread.featureValues,
+  };
 }
 
 async function promptModeForProviderMode(
@@ -119,6 +130,8 @@ export interface AskResult {
   created: boolean;
   /** 实际生效的发送方式：send=普通发送，interrupt=打断了运行中的回答。 */
   behavior: AppliedBehavior;
+  /** 实际使用的模型控制项；仅由 RPC 层决定是否写入模型配置记忆。 */
+  effectiveConfig: EffectiveAgentConfig;
 }
 
 export async function askThread(paseo: PaseoApi, settings: SidekickSettings, input: AskInput): Promise<AskResult> {
@@ -127,7 +140,15 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
   if (input.clientRequestId) {
     const knownId = registry.lookupRequestId(input.clientRequestId);
     const known = knownId ? registry.getThread(knownId) : undefined;
-    if (known) return { threadId: known.id, agentId: known.agentId, created: false, behavior: "send" };
+    if (known) {
+      return {
+        threadId: known.id,
+        agentId: known.agentId,
+        created: false,
+        behavior: "send",
+        effectiveConfig: effectiveConfigFromThread(known),
+      };
+    }
   }
 
   const mainRef = await paseo.agents.ref(input.mainAgentId).refresh();
@@ -195,7 +216,13 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
     seedFromAgentId: input.continuationOf ?? null,
   });
   if (input.clientRequestId) registry.rememberRequestId(input.clientRequestId, record.id);
-  return { threadId: record.id, agentId: record.agentId, created: true, behavior: "send" };
+  return {
+    threadId: record.id,
+    agentId: record.agentId,
+    created: true,
+    behavior: "send",
+    effectiveConfig: effectiveConfigFromThread(record),
+  };
 }
 
 async function continueThread(
@@ -342,7 +369,19 @@ async function continueThread(
   console.log(
     `[bytheway] thread ${thread.id} ${nextThreadMode !== thread.mode ? `mode switched to ${nextThreadMode}` : "continued"} (${behavior})`,
   );
-  return { threadId: thread.id, agentId: thread.agentId, created: false, behavior };
+  return {
+    threadId: thread.id,
+    agentId: thread.agentId,
+    created: false,
+    behavior,
+    effectiveConfig: {
+      provider: thread.provider,
+      model: nextModel,
+      modeId: nextModeId,
+      thinkingOptionId: nextThinkingOptionId,
+      featureValues: nextFeatureValues,
+    },
+  };
 }
 
 interface CreateThreadInput {
@@ -699,7 +738,7 @@ export async function rebuildThread(
   thinkingOverride?: string | null,
   modeOverride?: string | null,
   featureValuesOverride?: Record<string, unknown>,
-): Promise<{ threadId: string; agentId: string }> {
+): Promise<{ threadId: string; agentId: string; effectiveConfig: EffectiveAgentConfig }> {
   await registry.ensureLoaded();
   const thread = registry.getThread(threadId);
   if (!thread) throw new Error("线程不存在");
@@ -800,7 +839,7 @@ export async function rebuildThread(
   const actualFeatures = createdSnapshot
     ? snapshotFeatureValues(createdSnapshot.agent.features)
     : {};
-  registry.upsertThread({
+  const record: ThreadRecord = {
     ...thread,
     agentId: handle.id,
     mode: nextThreadMode,
@@ -813,9 +852,14 @@ export async function rebuildThread(
     stateReason: null,
     updatedAt: Date.now(),
     syncCursor: null,
-  });
+  };
+  registry.upsertThread(record);
   console.log(`[bytheway] thread ${thread.id} rebuilt (agent ${handle.id})`);
-  return { threadId: thread.id, agentId: handle.id };
+  return {
+    threadId: thread.id,
+    agentId: handle.id,
+    effectiveConfig: effectiveConfigFromThread(record),
+  };
 }
 
 export async function cancelThread(

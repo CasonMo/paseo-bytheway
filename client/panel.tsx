@@ -10,10 +10,13 @@ import {
   threadsRebuild,
   threadsRename,
   updateCheck,
+  modelConfigsList,
+  type RememberedModelConfigView,
   type ThreadRuntimeStatus,
   type ThreadView,
 } from "../shared/contracts";
 import { PLUGIN_VERSION } from "../shared/meta";
+import { modelConfigKey, resolveRememberedModelConfig } from "../shared/model-configs";
 import { sidekickSettings } from "../shared/settings";
 import {
   resolveThinkingRequest,
@@ -22,6 +25,7 @@ import {
 } from "../shared/thinking";
 import {
   mergeFeatureDefaults,
+  sanitizeFeatureValues,
   sameFeatureValues,
   snapshotFeatureValues,
   threadModeForProviderMode,
@@ -35,6 +39,9 @@ import { onThreadFocusRequest, peekPendingThreadFocus, takePendingThreadFocus } 
 import { bottomOffset, nextScrollFollow } from "./scroll-follow";
 import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
+import { SubagentPill } from "./subagents/SubagentPill";
+import type { SubagentRow } from "./subagents/model";
+import { useSidekickSubagents } from "./subagents/use-subagents";
 import { LiveItemView, PermissionBanner, TurnStatusLine } from "./transcript/items";
 
 /** 反馈入口：GitHub 新建 issue（提问题 / 提功能）。 */
@@ -71,6 +78,8 @@ interface ModelOption {
   defaultThinkingOptionId?: string;
 }
 
+const NO_THINKING_OPTIONS: ThinkingOption[] = [];
+
 export function SidekickPanel({ theme, layout, host, agentId, navigation }: PluginAgentPanelProps) {
   const paseo = usePaseo();
   const toast = useToast();
@@ -83,13 +92,19 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const rebuildRpc = useRpc(threadsRebuild);
   const renameRpc = useRpc(threadsRename);
   const updateRpc = useRpc(updateCheck);
+  const modelConfigsRpc = useRpc(modelConfigsList);
 
   const settingsState = useSettings(sidekickSettings);
   const experimentalCancel = settingsState.status === "ready" ? settingsState.values.experimentalCancel : true;
+  const rememberModelConfig =
+    settingsState.status === "ready" ? settingsState.values.rememberModelConfig : true;
   const locale = useLocale();
   const t = useT();
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ latest: string; requiredPaseo: string | null } | null>(null);
+  const [rememberedModelConfigs, setRememberedModelConfigs] = useState<
+    Record<string, RememberedModelConfigView>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +123,23 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       cancelled = true;
     };
   }, [updateRpc]);
+
+  const loadModelConfigs = useCallback(async () => {
+    if (!rememberModelConfig) {
+      setRememberedModelConfigs({});
+      return;
+    }
+    try {
+      const result = await modelConfigsRpc({});
+      setRememberedModelConfigs(result.configs);
+    } catch {
+      // Memory is optional; keep the current map when the daemon is unavailable.
+    }
+  }, [modelConfigsRpc, rememberModelConfig]);
+
+  useEffect(() => {
+    void loadModelConfigs();
+  }, [loadModelConfigs]);
 
   const mainAgent = useAgent(agentId, (value) => ({
     title: value.title,
@@ -223,11 +255,48 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   const streamAgentId = selected && selected.state === "open" ? selected.agentId : null;
   const stream = useThreadStream(streamAgentId);
+  const subagents = useSidekickSubagents(
+    selected?.agentId ?? null,
+    stream.state.items,
+    selected?.provider ?? null,
+  );
   const turn = stream.state.turn;
   const busy = turn.status === "running";
   /** 权威忙碌态：流状态与服务端列表任一为运行中即认为在跑。 */
   const running = busy || agentRunning;
   const connection = stream.state.connection;
+
+  const openSubagentRow = useCallback(
+    (row: SubagentRow) => {
+      if (row.kind === "paseo") {
+        navigation?.openAgent({ agentId: row.id });
+        return;
+      }
+      const hostNavigation = navigation as
+        | (typeof navigation & {
+            openProviderSubagent?: (input: {
+              parentAgentId: string;
+              subagentId: string;
+              serverId?: string;
+            }) => void;
+          })
+        | undefined;
+      if (hostNavigation?.openProviderSubagent) {
+        hostNavigation.openProviderSubagent({
+          parentAgentId: row.parentAgentId,
+          subagentId: row.id,
+        });
+        return;
+      }
+      // Older hosts expose only openAgent. The parent opens with Paseo's native
+      // Subagents pill, from which the provider subagent can be opened.
+      if (selected) {
+        navigation?.openAgent({ agentId: selected.agentId });
+        toast.show(t.subagentsOpenParentHint, { variant: "info" });
+      }
+    },
+    [navigation, selected, t, toast],
+  );
 
   // turn 结束后刷新一次，让状态圆点尽快更新
   useEffect(() => {
@@ -342,6 +411,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [modeModalOpen, setModeModalOpen] = useState(false);
   const [featureModalId, setFeatureModalId] = useState<string | null>(null);
   const [controlsKey, setControlsKey] = useState<string | null>(null);
+  const restoredModelKeyRef = useRef<string | null>(null);
   const [providerCatalog, setProviderCatalog] = useState<
     Array<{ id: string; label: string; models: ModelOption[] }>
   >([]);
@@ -356,6 +426,9 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   useEffect(() => {
     setModelOverride(null);
+    setModeTouched(false);
+    setFeaturesTouched(false);
+    restoredModelKeyRef.current = null;
     setStopHint(null);
     setSendError(null);
   }, [selectedId]);
@@ -457,7 +530,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const targetModelOption = providerCatalog
     .find((entry) => entry.id === targetProvider)
     ?.models.find((model) => model.id === targetModel);
-  const targetThinkingOptions = targetModelOption?.thinkingOptions ?? [];
+  const targetThinkingOptions = targetModelOption?.thinkingOptions ?? NO_THINKING_OPTIONS;
   const mainModelOption = providerCatalog
     .find((entry) => entry.id === mainAgent?.provider)
     ?.models.find((model) => model.id === (mainAgent?.model ?? ""));
@@ -555,6 +628,10 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   useEffect(() => {
     if (selected) return;
+    const currentKey =
+      targetProvider && targetModel ? modelConfigKey(targetProvider, targetModel) : null;
+    if (currentKey && restoredModelKeyRef.current === currentKey) return;
+    if (modeTouched || featuresTouched) return;
     const followMain = targetMatchesMain;
     setSelectedModeId(
       followMain ? mainRuntime?.modeId ?? mainAgent?.currentModeId ?? null : null,
@@ -562,7 +639,16 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     setFeatureValues(followMain ? mainRuntime?.featureValues ?? {} : {});
     setModeTouched(false);
     setFeaturesTouched(false);
-  }, [selectedId, targetMatchesMain, mainRuntime, mainAgent?.currentModeId]);
+  }, [
+    selectedId,
+    targetMatchesMain,
+    mainRuntime,
+    mainAgent?.currentModeId,
+    targetProvider,
+    targetModel,
+    modeTouched,
+    featuresTouched,
+  ]);
 
   const thinkingOptionLabel = (id: string | null): string => {
     if (id === null) return t.thinkingDefault;
@@ -574,6 +660,26 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       : thinkingOptionLabel(thinkingChoice.id);
 
   const controlsReady = controlsKey === targetKey;
+
+  useEffect(() => {
+    if (!controlsReady || modeCatalog.length === 0) return;
+    if (selectedModeId !== null && !modeCatalog.some((mode) => mode.id === selectedModeId)) {
+      setSelectedModeId(null);
+      setModeTouched(true);
+    }
+  }, [controlsReady, modeCatalog, selectedModeId]);
+
+  useEffect(() => {
+    if (!controlsReady || targetThinkingOptions.length === 0) return;
+    if (
+      thinkingChoice.mode === "option" &&
+      thinkingChoice.id !== null &&
+      !targetThinkingOptions.some((option) => option.id === thinkingChoice.id)
+    ) {
+      setThinkingChoice({ mode: "option", id: null });
+    }
+  }, [controlsReady, targetThinkingOptions, thinkingChoice]);
+
   const currentMode = modeCatalog.find((mode) => mode.id === selectedModeId) ?? null;
   const currentModeLabel = currentMode?.label ?? selectedModeId ?? t.providerDefault;
   const requestThreadMode =
@@ -662,6 +768,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       setShowJump(false);
       await refresh();
       setSelectedId(result.threadId);
+      void loadModelConfigs();
       if ("behavior" in result && result.behavior === "interrupt") {
         toast.show(t.sentInterruptToast, { variant: "info" });
       }
@@ -684,6 +791,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     thinkingRequest,
     sentFeatureValues,
     refresh,
+    loadModelConfigs,
     toast,
     t,
   ]);
@@ -1035,6 +1143,56 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const currentModelLabel =
     modelOverride ?? selected?.model ?? mainAgent?.model ?? t.followMain;
 
+  const applyModelSelection = useCallback(
+    (provider: string, model: string, matchesMain: boolean) => {
+      setModelOverride(`${provider}/${model}`);
+      const modelOption = providerCatalog
+        .find((entry) => entry.id === provider)
+        ?.models.find((entry) => entry.id === model);
+      const key = modelConfigKey(provider, model);
+      const saved = rememberModelConfig && key ? rememberedModelConfigs[key] : undefined;
+      const restored = resolveRememberedModelConfig(
+        saved,
+        modelOption?.thinkingOptions ?? [],
+        matchesMain,
+      );
+      restoredModelKeyRef.current = restored && key ? key : null;
+      if (restored) {
+        const nextFeatureValues =
+          key === targetKey && controlsReady
+            ? sanitizeFeatureValues(restored.featureValues, featureCatalog)
+            : restored.featureValues;
+        setThinkingChoice(restored.thinkingChoice);
+        setSelectedModeId(restored.modeId);
+        setFeatureValues({ ...nextFeatureValues });
+        setModeTouched(true);
+        setFeaturesTouched(true);
+        toast.show(t.modelConfigRestored, { variant: "info" });
+      } else {
+        setThinkingChoice(thinkingChoiceForModelTarget(matchesMain));
+        setSelectedModeId(
+          matchesMain ? mainRuntime?.modeId ?? mainAgent?.currentModeId ?? null : null,
+        );
+        setFeatureValues(matchesMain ? mainRuntime?.featureValues ?? {} : {});
+        setModeTouched(false);
+        setFeaturesTouched(false);
+      }
+      setModelModalOpen(false);
+    },
+    [
+      providerCatalog,
+      rememberModelConfig,
+      rememberedModelConfigs,
+      mainRuntime,
+      mainAgent?.currentModeId,
+      targetKey,
+      controlsReady,
+      featureCatalog,
+      toast,
+      t,
+    ],
+  );
+
   /* ---------------- 渲染 ---------------- */
 
   return (
@@ -1267,6 +1425,20 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
       {/* Composer */}
       <View style={styles.composer}>
+        {selected ? (
+          <SubagentPill
+            agentId={selected.agentId}
+            rows={subagents.rows}
+            summary={subagents.summary}
+            finishedCount={subagents.finishedCount}
+            theme={theme}
+            compact={compact}
+            onOpenRow={openSubagentRow}
+            onArchivePaseo={subagents.archivePaseoSubagent}
+            onDetachPaseo={subagents.detachPaseoSubagent}
+            onArchiveFinished={subagents.archiveFinished}
+          />
+        ) : null}
         <TextInput
           multiline
           style={styles.input}
@@ -1281,15 +1453,18 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
             accessibilityRole="button"
             style={[styles.chip, styles.modelChip]}
             onPress={() => {
-              const preferred =
-                (providerLocked ? lockedProvider : null) ??
-                overrideSplit?.provider ??
-                selected?.provider ??
-                mainAgent?.provider ??
-                providerCatalog[0]?.id ??
-                null;
-              setPickerProvider(preferred);
-              setModelModalOpen(true);
+              void (async () => {
+                await loadModelConfigs();
+                const preferred =
+                  (providerLocked ? lockedProvider : null) ??
+                  overrideSplit?.provider ??
+                  selected?.provider ??
+                  mainAgent?.provider ??
+                  providerCatalog[0]?.id ??
+                  null;
+                setPickerProvider(preferred);
+                setModelModalOpen(true);
+              })();
             }}
           >
             <Text numberOfLines={1} ellipsizeMode="tail" style={styles.modelChipText}>
@@ -1559,12 +1734,16 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
             </View>
           )}
           <Text style={styles.muted}>{t.modelsSheetHint}</Text>
+          {rememberModelConfig ? (
+            <Text style={styles.muted}>{t.modelConfigSheetHint}</Text>
+          ) : null}
           {!providerLocked ? (
             <Pressable
               accessibilityRole="button"
               style={styles.modalRow}
               onPress={() => {
                 setModelOverride(null);
+                restoredModelKeyRef.current = null;
                 setThinkingChoice(thinkingChoiceForModelTarget(true));
                 setSelectedModeId(mainRuntime?.modeId ?? mainAgent?.currentModeId ?? null);
                 setFeatureValues(mainRuntime?.featureValues ?? {});
@@ -1579,31 +1758,43 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               </Text>
             </Pressable>
           ) : null}
-          {filteredModels.map((model) => (
-            <Pressable
-              key={model.id}
-              accessibilityRole="button"
-              style={styles.modalRow}
-              onPress={() => {
-                if (!effectivePickerProvider) return;
-                const matchesMain =
-                  effectivePickerProvider === mainAgent?.provider &&
-                  model.id === (mainAgent?.model ?? "");
-                // 统一存 "provider/model"：provider 恒为第一段，兼容含 "/" 的模型 id
-                setModelOverride(`${effectivePickerProvider}/${model.id}`);
-                setThinkingChoice(thinkingChoiceForModelTarget(matchesMain));
-                setSelectedModeId(matchesMain ? mainRuntime?.modeId ?? mainAgent?.currentModeId ?? null : null);
-                setFeatureValues(matchesMain ? mainRuntime?.featureValues ?? {} : {});
-                setModeTouched(false);
-                setFeaturesTouched(false);
-                setModelModalOpen(false);
-              }}
-            >
-              <Text numberOfLines={1} style={{ color: theme.colors.foreground, fontSize: 12.5 }}>
-                {model.label}
-              </Text>
-            </Pressable>
-          ))}
+          {filteredModels.map((model) => {
+            const key = effectivePickerProvider
+              ? modelConfigKey(effectivePickerProvider, model.id)
+              : null;
+            const remembered = rememberModelConfig && key
+              ? rememberedModelConfigs[key]
+              : undefined;
+            return (
+              <Pressable
+                key={model.id}
+                accessibilityRole="button"
+                style={styles.modalRow}
+                onPress={() => {
+                  if (!effectivePickerProvider) return;
+                  const matchesMain =
+                    effectivePickerProvider === mainAgent?.provider &&
+                    model.id === (mainAgent?.model ?? "");
+                  // 统一存 "provider/model"：provider 恒为第一段，兼容含 "/" 的模型 id
+                  applyModelSelection(effectivePickerProvider, model.id, matchesMain);
+                }}
+              >
+                <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Text
+                    numberOfLines={1}
+                    style={{ color: theme.colors.foreground, fontSize: 12.5, flexShrink: 1 }}
+                  >
+                    {model.label}
+                  </Text>
+                  {remembered ? (
+                    <Text style={{ color: theme.colors.accent, fontSize: 10 }}>
+                      {t.modelConfigRemembered}
+                    </Text>
+                  ) : null}
+                </View>
+              </Pressable>
+            );
+          })}
           {filteredModels.length === 0 ? <Text style={styles.muted}>{t.noModels}</Text> : null}
         </ScrollView>
       </OverlaySheet>

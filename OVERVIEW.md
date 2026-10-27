@@ -12,11 +12,14 @@ Each side thread is backed by a temporary agent in the same workspace:
   question to a side agent;
 - The panel subscribes directly to the side agent's timeline and streams text, thinking,
   tool calls, todos, permission requests, and per-turn usage live;
+- Paseo child agents and provider-native subagents spawned by the active side agent are
+  merged into a Subagent pill above the composer; the pill is hidden when there are none;
 - By default the side agent is linked to the main session: it reads the latest progress
   on demand through Paseo's built-in tools. When tool injection is unavailable, the
   plugin falls back to passive sync (incremental context attached to each message);
 - Transcripts live in Paseo's own agent timelines. The plugin stores only a thread
-  registry (ids, titles, status) on the local machine and never copies Q&A content.
+  registry (ids, titles, status) and per-model control memory on the local machine; it
+  never copies Q&A content.
 
 ## Usage
 
@@ -27,6 +30,13 @@ Each side thread is backed by a temporary agent in the same workspace:
 - The composer renders provider-native controls: Model, Thinking, Mode, and Features. Modes
   come from `listModes`, feature controls from `listFeatures`, and thinking levels from the
   model catalog. Unsupported controls are hidden automatically;
+- **Model settings are remembered by default**: after a successful send or rebuild, the
+  effective Mode, thinking level, and Features are stored under `provider/model`. Selecting
+  that model again restores them; different models stay independent. Choosing “Follow main”
+  does not apply model memory. The setting can be disabled;
+- The **Subagent** pill above the composer shows the active side thread's child count and
+  running state. Open a row to view details; Paseo child agents can be detached or archived,
+  and finished subagents can be cleaned up in one action;
 - New threads default to Follow: Mode, Thinking, and Features snapshot the main session when
   the provider/model match; otherwise the target provider/model defaults are used. Existing
   threads update in place without replacing the backing subagent;
@@ -55,6 +65,8 @@ Settings → Plugins → ByTheWay 侧聊:
 - Default model (follow the main session or fixed provider/model). Mode, thinking, and
   provider feature controls are discovered from the active provider/model; new threads
   follow the main session when compatible and otherwise use provider/model defaults
+- Remember model settings (on by default): restore the last effective Mode, thinking level,
+  and Features for each model
 - New threads can pick any provider; existing threads switch models in place within their own provider only
 - First-turn snapshot depth, action digest, context fallback
 - Attach side agents to the main session as children
@@ -69,9 +81,11 @@ and the interface works on desktop, web, and mobile clients.
 ## Data and permissions
 
 - Reads: main-session and side-agent timelines through the local Paseo daemon (for
-  context assembly and UI display);
+  context assembly and UI display), plus child-agent metadata and provider subagent status
+  events for the composer Subagent manager;
 - Writes: the local plugin data directory `~/.paseo/plugin-data/paseo-bytheway/`
-  (thread registry only);
+  (thread registry and model settings memory; model memory contains only control ids/values,
+  no transcript content, and keeps the 50 most recently used models);
 - Network: remote images in side-chat messages load directly from their HTTP(S) URLs on
   the client, so the image host receives that request and the client's network address.
   Side-chat questions, context snapshots, and tool results are sent to the model provider
@@ -106,3 +120,11 @@ and the interface works on desktop, web, and mobile clients.
   helper agent that archives itself when done (it may appear briefly in the agent list);
 - Running side chats are limited by the configured total concurrency cap; requests beyond
   it are rejected with a hint.
+- Provider-native subagent details are owned by the Paseo main panel. Until the host exposes
+  a provider-subagent deep link, clicking one of those rows opens the parent side thread first;
+  Paseo child agents open directly.
+- The Subagent pill currently aggregates Paseo child agents and provider subagents on the
+  current host/daemon only; agents delegated to another host are not shown yet.
+- Model memory uses effective values. If a stored Mode, thinking level, or Feature no longer
+  exists for the current provider/model, it falls back to the current default instead of
+  blocking the send.

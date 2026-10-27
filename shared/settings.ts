@@ -5,10 +5,12 @@ import { z } from "zod";
 export const sidekickSettings = defineSettings({
   id: "bytheway-settings",
   scope: "host",
-  version: 3,
+  version: 4,
   schema: z.object({
     // 新线程默认模型；Mode/Thinking/Features 跟随主会话或 provider 默认。
     defaultModel: z.string().default("follow"),
+    // 按 provider/model 记住用户实际使用过的 Mode、思考档与 Features。
+    rememberModelConfig: z.boolean().default(true),
 
     // 上下文
     snapshotDepth: z.number().int().min(0).max(50).default(6),
@@ -38,6 +40,9 @@ export const sidekickSettings = defineSettings({
       if (fromVersion < 3) {
         const { defaultMode: _defaultMode, maxConcurrentAsk: _ask, maxConcurrentWork: _work, ...rest } = next;
         next = rest;
+      }
+      if (fromVersion < 4 && next.rememberModelConfig === undefined) {
+        next = { ...next, rememberModelConfig: true };
       }
       return next;
     }

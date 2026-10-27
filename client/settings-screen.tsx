@@ -111,6 +111,12 @@ export function SidekickSettingsScreen({ theme, layout }: PluginSurfaceProps) {
           initialValue={values.defaultModel}
           onChangeText={(text) => saveText("defaultModel", text)}
         />
+        <SettingsSwitch
+          label={t("set.rememberModelConfig")}
+          hint={t("set.rememberModelConfigHint")}
+          value={values.rememberModelConfig}
+          onValueChange={(value) => save({ rememberModelConfig: value })}
+        />
       </SettingsSection>
 
       <SettingsSection title={t("set.context")} info={t("set.contextHint")}>

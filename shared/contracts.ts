@@ -44,6 +44,14 @@ export const threadViewSchema = z.object({
 });
 export type ThreadView = z.infer<typeof threadViewSchema>;
 
+export const rememberedModelConfigSchema = z.object({
+  modeId: z.string().nullable(),
+  thinkingOptionId: z.string().nullable(),
+  featureValues: z.record(z.string(), z.union([z.boolean(), z.string()])),
+  updatedAt: z.number().int().nonnegative(),
+});
+export type RememberedModelConfigView = z.infer<typeof rememberedModelConfigSchema>;
+
 export const textAttachmentSchema = z.object({
   type: z.literal("text"),
   mimeType: z.string(),
@@ -62,6 +70,14 @@ export const threadsList = defineRpc({
   output: z.object({
     threads: z.array(threadViewSchema),
     threadStatuses: z.record(z.string(), threadRuntimeStatusSchema),
+  }),
+});
+
+export const modelConfigsList = defineRpc({
+  name: "bytheway.model-configs.list",
+  input: z.object({}),
+  output: z.object({
+    configs: z.record(z.string(), rememberedModelConfigSchema),
   }),
 });
 

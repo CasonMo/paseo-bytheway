@@ -83,6 +83,9 @@ export interface UIStrings {
   threadNamePlaceholder: string;
   modelsSheet: string;
   modelsSheetHint: string;
+  modelConfigSheetHint: string;
+  modelConfigRemembered: string;
+  modelConfigRestored: string;
   searchModels: string;
   followMain: string;
   noModels: string;
@@ -95,6 +98,26 @@ export interface UIStrings {
   renameFailed: (error: string) => string;
   permissionFailed: (error: string) => string;
   stopIneffective: string;
+
+  subagentsPillOne: string;
+  subagentsPillMany: (count: number) => string;
+  subagentsPillRunning: (count: number) => string;
+  subagentsPillNeedsInput: (count: number) => string;
+  subagentsPillFailed: (count: number) => string;
+  subagentsPillAttention: (count: number) => string;
+  subagentsTitle: string;
+  subagentsStatusNeedsInput: string;
+  subagentsStatusAttention: string;
+  subagentsArchiveFinished: string;
+  subagentsArchiveFinishedBusy: string;
+  subagentsArchiveRunningConfirm: string;
+  subagentsArchive: string;
+  subagentsDetach: string;
+  subagentsArchivedToast: string;
+  subagentsDetachedToast: string;
+  subagentsArchiveFinishedToast: string;
+  subagentsOpenParentHint: string;
+  subagentsActionFailed: (error: string) => string;
 
   answering: string;
   answeringElapsed: (elapsed: string) => string;
@@ -208,6 +231,9 @@ export function useT(): UIStrings {
       threadNamePlaceholder: t("threadNamePlaceholder"),
       modelsSheet: t("modelsSheet"),
       modelsSheetHint: t("modelsSheetHint"),
+      modelConfigSheetHint: t("modelConfigSheetHint"),
+      modelConfigRemembered: t("modelConfigRemembered"),
+      modelConfigRestored: t("modelConfigRestored"),
       searchModels: t("searchModels"),
       followMain: t("followMain"),
       noModels: t("noModels"),
@@ -220,6 +246,26 @@ export function useT(): UIStrings {
       renameFailed: (error: string) => t("renameFailed", { error }),
       permissionFailed: (error: string) => t("permissionFailed", { error }),
       stopIneffective: t("stopIneffective"),
+
+      subagentsPillOne: t("subagentsPillOne"),
+      subagentsPillMany: (count: number) => t("subagentsPillMany", { count }),
+      subagentsPillRunning: (count: number) => t("subagentsPillRunning", { count }),
+      subagentsPillNeedsInput: (count: number) => t("subagentsPillNeedsInput", { count }),
+      subagentsPillFailed: (count: number) => t("subagentsPillFailed", { count }),
+      subagentsPillAttention: (count: number) => t("subagentsPillAttention", { count }),
+      subagentsTitle: t("subagentsTitle"),
+      subagentsStatusNeedsInput: t("subagentsStatusNeedsInput"),
+      subagentsStatusAttention: t("subagentsStatusAttention"),
+      subagentsArchiveFinished: t("subagentsArchiveFinished"),
+      subagentsArchiveFinishedBusy: t("subagentsArchiveFinishedBusy"),
+      subagentsArchiveRunningConfirm: t("subagentsArchiveRunningConfirm"),
+      subagentsArchive: t("subagentsArchive"),
+      subagentsDetach: t("subagentsDetach"),
+      subagentsArchivedToast: t("subagentsArchivedToast"),
+      subagentsDetachedToast: t("subagentsDetachedToast"),
+      subagentsArchiveFinishedToast: t("subagentsArchiveFinishedToast"),
+      subagentsOpenParentHint: t("subagentsOpenParentHint"),
+      subagentsActionFailed: (error: string) => t("subagentsActionFailed", { error }),
 
       answering: t("answering"),
       answeringElapsed: (elapsed: string) => t("answeringElapsed", { elapsed }),

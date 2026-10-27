@@ -40,6 +40,9 @@ Paseo plugin requirements we must follow when developing, reviewing, and releasi
   configured providers, and are archived as soon as they finish.
 - The thread registry stays in `~/.paseo/plugin-data/paseo-bytheway/` and contains thread
   metadata only; Q&A transcripts stay in Paseo's own agent timelines.
+- Per-model setting memory stays in the same plugin data directory (`model-configs.json`).
+  It contains only Mode/thinking/feature control ids and values, bounded to the 50 most
+  recently used models, never prompts or transcripts.
 - Development scripts connect to the local daemon with the credential supplied by the
   user's environment; never print, log, or commit credentials or key material.
 

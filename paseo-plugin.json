@@ -1,7 +1,7 @@
 {
   "id": "paseo-bytheway",
   "name": "ByTheWay 侧聊",
-  "description": "ByTheWay (btw) · 旁路侧聊：/btw 提问，首条提问回显、实时执行流、多线程、agent 直连上下文、provider 原生 Mode/思考/Feature 控制 / ByTheWay (btw) side chats: use /btw to ask, with original-prompt recall, live execution stream, threads, agent-linked context, provider-native mode/thinking/feature controls",
+  "description": "ByTheWay (btw) · 旁路侧聊：/btw 提问，首条提问回显、实时执行流、多线程、Subagent 管理、模型配置记忆、agent 直连上下文、provider 原生 Mode/思考/Feature 控制 / ByTheWay (btw) side chats: use /btw to ask, with original-prompt recall, live execution stream, threads, subagent management, per-model settings memory, agent-linked context, provider-native mode/thinking/feature controls",
   "requirements": {
     "paseo": ">=0.13.0-beta.1"
   },

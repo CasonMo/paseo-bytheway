@@ -8,14 +8,17 @@
 
 - 从面板或 `/btw` 等命令发起后，插件在 daemon 侧读取主会话最近的对话作为首轮上下文快照，并把问题发给侧聊 agent；
 - 面板直接订阅侧聊 agent 的时间线，实时直播流式文本、思考、工具调用、待办、权限请求与每回合用量；
+- 当前侧聊 agent 派生出的 Paseo 子 agent 与 provider 原生 subagent 会合并显示在输入框上方；没有子线程时不显示；
 - 默认「agent 直连」上下文：侧聊 agent 通过 Paseo 内置工具按需读取主会话的最新进展；工具不可用时自动降级为被动同步（每条消息附带增量上下文）；
-- 转录本身保存在 Paseo 自己的 agent 时间线里；插件只在本机保留线程注册表（线程 id、标题、状态等元数据），不复制问答内容。
+- 转录本身保存在 Paseo 自己的 agent 时间线里；插件只在本机保留线程注册表（线程 id、标题、状态等元数据）与模型配置记忆，不复制问答内容。
 
 ## 使用
 
 - `/btw <问题>`：继续当前侧聊线程（没有则新开）；不带问题时只打开面板、不创建线程；`/btw-new <问题>`：新开一条；
 - 命令创建或续聊线程后，面板会立即刷新并选中对应线程，不再等待 20 秒轮询；
 - 输入区动态显示 `模型 / 思考 / Mode / Features`：Mode 来自 `listModes`，功能项来自 `listFeatures`，思考档来自模型目录。没有对应能力的 provider 自动隐藏控件；
+- **模型配置记忆默认开启**：每次发送或重建成功后，按 `provider/model` 记住实际生效的 Mode、思考档和 Features；下次在模型选择器中选到同一模型时自动恢复。不同模型互不影响；选择「跟随主会话」不会套用模型记忆。可在设置中关闭；
+- 输入框上方的 **Subagent** 胶囊显示当前侧聊线程的子线程数量与运行状态：点开可打开详情；Paseo 子 agent 可分离或归档，已完成的 subagent 可一键清理；
 - 新线程默认跟随主会话的 mode、thinking 和 feature 值；模型/provider 不一致时使用目标 provider/model 默认值；
 - 已有线程切换 Mode、思考档或功能项会原地更新对应 subagent，不更换 agent；
 - `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
@@ -34,6 +37,7 @@
 Paseo 设置 → 插件 → ByTheWay 侧聊：
 
 - 默认模型（跟随主会话或指定 provider/model）；Mode、思考档和 provider features 由当前 provider/model 动态提供，新线程默认跟随主会话或 provider 默认值
+- 记住模型配置（默认开启）：按模型恢复上次实际使用的 Mode、思考档和 Features
 - 新建线程可跨 Provider 选择模型；已有线程仅支持同一 Provider 内原地切换模型（会话保持连续）
 - 首轮快照深度、动作摘要开关、上下文兜底开关
 - 挂到主会话（侧聊 agent 作为子 agent）
@@ -45,8 +49,8 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 
 ## 数据与权限
 
-- 读取：通过本机 Paseo daemon 读取主会话与侧聊 agent 的时间线（用于组装上下文与界面展示）；
-- 写入：仅写本机插件数据目录 `~/.paseo/plugin-data/paseo-bytheway/`（线程注册表）；
+- 读取：通过本机 Paseo daemon 读取主会话与侧聊 agent 的时间线（用于组装上下文与界面展示），并读取侧聊 agent 的子 agent 元数据与 provider subagent 状态事件（用于输入框上方的 Subagent 管理）；
+- 写入：仅写本机插件数据目录 `~/.paseo/plugin-data/paseo-bytheway/`（线程注册表与模型配置记忆；模型配置记忆只含 Mode / 思考档 / Features 控制项，不含对话内容，最多保留最近 50 个模型）；
 - 网络：侧聊消息中的远程图片由客户端直接从其 HTTP(S) 地址加载，图片所在站点会收到该请求与客户端的网络地址；侧聊的提问、上下文与工具结果会发送给你配置的模型提供方；面板打开时会向 `raw.githubusercontent.com` 读取本插件 main 分支的 `package.json` / `paseo-plugin.json` 以检查更新（仅版本号，不上传任何会话数据）；面板底部的反馈入口仅在你点击时经系统浏览器打开本仓库的 GitHub Issue 页面。
 - 权限：侧聊 agent 创建时继承主会话的 Mode、思考档与 provider features（如 opencode 的 auto_accept），权限行为默认与主会话一致。工具权限请求显示在面板内，可直接批准或拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后一步统一提交全部答案）。默认策略为「跟随主会话」，插件不接管权限处理，侧聊与主会话行为一致；可选插件策略包括自动放行只读、全部拒绝、或无人处理时按设置分级超时自动拒绝；
 - 停止：优先通过 Paseo 工具请求取消；未生效时提示在原生标签页中停止。
@@ -57,3 +61,6 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 - 已有线程在同一 Provider 内原地切换模型（Provider 在创建线程时固定，需要其它 Provider 请新开线程）；Mode、思考档和 features 切换同样原地生效，会通过临时 helper agent 调用 Paseo 的 `update_agent`，并刷新同一个 subagent 的快照校验是否真的生效；任何切换失败时消息不会发出，面板会显示原因；
 - AI 标题生成、实验性取消与模型/思考/模式切换会短暂创建一个辅助 agent（用后即自动归档，可能短暂出现在 agent 列表中）；
 - 同一时刻运行中的侧聊受并发上限约束；运行中的线程过多时新请求会被拒绝并提示。
+- Provider 原生 subagent 的详情页由 Paseo 主面板提供；宿主尚未暴露 provider subagent 深链时，点击此类行会先打开父侧聊会话，再从主面板的 Subagents 胶囊进入详情。Paseo 子 agent 可直接打开。
+- Subagent 胶囊当前只汇总当前 host/daemon 上的 Paseo 子 agent 与 provider subagent；跨 host 委派的 agent 暂不显示。
+- 模型配置记忆以实际生效值为准；如果保存的 Mode、思考档或 Feature 在当前 provider/model 目录中已不存在，会回退到当前默认值，不会阻塞发送。
