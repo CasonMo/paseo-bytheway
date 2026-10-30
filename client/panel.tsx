@@ -35,7 +35,13 @@ import {
 import { copyText, FlatList, Icon, openExternalUrl, ScrollView, TextInput, useToast } from "./host-ui";
 import { OverlaySheet } from "./overlay";
 import { localizeServerMessage, useLocale, useT } from "./i18n";
-import { onThreadFocusRequest, peekPendingThreadFocus, takePendingThreadFocus } from "./panel-focus";
+import {
+  onNewThreadRequest,
+  onThreadFocusRequest,
+  peekPendingThreadFocus,
+  takePendingNewThread,
+  takePendingThreadFocus,
+} from "./panel-focus";
 import { bottomOffset, nextScrollFollow } from "./scroll-follow";
 import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
@@ -177,6 +183,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [threads, setThreads] = useState<ThreadView[]>([]);
   const [threadStatuses, setThreadStatuses] = useState<Record<string, ThreadRuntimeStatus>>({});
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
+  const newThreadIntentRef = useRef(0);
   const [threadModalOpen, setThreadModalOpen] = useState(false);
   const [threadQuery, setThreadQuery] = useState("");
   const [renameTarget, setRenameTarget] = useState<ThreadView | null>(null);
@@ -215,15 +222,16 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
     const apply = async (threadId: string) => {
       const request = ++latestRequest;
+      const intentVersion = newThreadIntentRef.current;
       let list = await refresh();
-      if (cancelled || request !== latestRequest) return;
+      if (cancelled || request !== latestRequest || intentVersion !== newThreadIntentRef.current) return;
       // 线程刚写入注册表时列表可能慢半拍，重试一次再放弃。
       if (!list?.some((thread) => thread.id === threadId)) {
         await new Promise((resolve) => setTimeout(resolve, 250));
-        if (cancelled || request !== latestRequest) return;
+        if (cancelled || request !== latestRequest || intentVersion !== newThreadIntentRef.current) return;
         list = await refresh();
       }
-      if (cancelled || request !== latestRequest) return;
+      if (cancelled || request !== latestRequest || intentVersion !== newThreadIntentRef.current) return;
       if (!list?.some((thread) => thread.id === threadId)) return;
       setSelectedId(threadId);
       takePendingThreadFocus(agentId, threadId);
@@ -432,6 +440,22 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     setStopHint(null);
     setSendError(null);
   }, [selectedId]);
+
+  // /btw-new 空提示词：进入新线程草稿（不创建 agent），允许先选 provider/model。
+  useEffect(() => {
+    const enterNewThread = () => {
+      newThreadIntentRef.current += 1;
+      takePendingThreadFocus(agentId);
+      setSelectedId(null);
+      setInput("");
+    };
+    if (takePendingNewThread(agentId)) enterNewThread();
+    return onNewThreadRequest((mainAgentId) => {
+      if (mainAgentId !== agentId) return;
+      takePendingNewThread(mainAgentId);
+      enterNewThread();
+    });
+  }, [agentId]);
 
   // 跨 Provider 模型目录：一次 snapshot 取全部，失败时退回主会话 provider
   useEffect(() => {

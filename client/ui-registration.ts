@@ -1,7 +1,7 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { threadsAsk } from "../shared/contracts";
 import { messages } from "./messages";
-import { requestThreadFocus } from "./panel-focus";
+import { requestNewThread, requestThreadFocus } from "./panel-focus";
 import { SidekickPanel } from "./panel";
 import { SidekickSettingsScreen } from "./settings-screen";
 
@@ -78,6 +78,7 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
           const question = args.trim();
           if (!question) {
             openPanel("bytheway", { location: "explorer" });
+            if (kind === "new") requestNewThread(agent.id);
             return;
           }
           try {

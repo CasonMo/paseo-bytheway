@@ -24,7 +24,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 | 命令 | 行为 |
 |---|---|
 | `/btw <问题>` | 继续当前侧聊线程（无则新开），并打开面板；不带问题时仅打开面板 |
-| `/btw-new <问题>` | 新开一条侧聊线程 |
+| `/btw-new [问题]` | 新开一条侧聊线程；不带问题时打开面板并进入新线程草稿，可先选 provider/model |
 | `/fork [提示词]` | 克隆当前会话转录为新并行 agent |
 
 命令创建或续聊线程后，面板会立即刷新并选中对应线程。也可以从 Command Center 打开「ByTheWay 侧聊」面板或「ByTheWay 设置」。

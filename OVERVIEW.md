@@ -24,7 +24,8 @@ Each side thread is backed by a temporary agent in the same workspace:
 ## Usage
 
 - `/btw <question>` continues the current side thread (or starts one); a bare `/btw` just
-  opens the panel without creating anything; `/btw-new <question>` starts a new one;
+  opens the panel without creating anything; `/btw-new <question>` starts a new one, and
+  a bare `/btw-new` opens a fresh thread draft so you can pick the provider/model first;
 - A command-created or continued thread is selected immediately after the panel opens or
   refreshes; it never waits for the 20-second thread-list poll;
 - The composer renders provider-native controls: Model, Thinking, Mode, and Features. Modes
