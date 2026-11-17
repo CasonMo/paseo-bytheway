@@ -1,13 +1,10 @@
 /** 实测：侧聊 thinking 默认继承 + 同一 subagent 原地切换思考档。 */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, removeThread } from "../server/threads";
 import { getThread } from "../server/registry";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 type Model = NonNullable<Awaited<ReturnType<Client["providers"]["listModels"]>>["models"]>[number];
 
@@ -32,16 +29,7 @@ async function waitAnswer(handle: AgentHandle, before: number, timeoutMs: number
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-thinking-switch-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-thinking-switch-check");
   let threadId: string | null = null;
 
   try {
@@ -131,12 +119,12 @@ async function main(): Promise<void> {
     }
 
     const assistantBefore = await countAssistant(handle);
+    await daemon.setAgentThinkingOption(thread.agentId, nextThinking.id);
     const switched = await askThread(client, settings, {
       mainAgentId: main.id,
       question: "请只回复：thinking-b",
       mode: "ask",
       target: { kind: "continue", threadId: thread.threadId },
-      thinkingOptionId: nextThinking.id,
     });
     if (switched.threadId !== thread.threadId || switched.agentId !== thread.agentId) {
       throw new Error("thinking switch replaced the thread or subagent");
@@ -168,7 +156,7 @@ async function main(): Promise<void> {
       await removeThread(client, threadId).catch(() => {});
       console.log("cleaned");
     }
-    await client.close().catch(() => {});
+    await daemon.close().catch(() => {});
   }
 }
 

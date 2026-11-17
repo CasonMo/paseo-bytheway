@@ -3,20 +3,23 @@
  *
  * 覆盖：侧聊正在回答时发送消息
  *   - 不再抛「侧聊正在回答中」
- *   - 行为为 interrupt：当前回合被打断（进行中的工具被取消），新消息作为新一轮发出
+ *   - 行为为 interrupt：当前回合被打断，新消息作为新一轮发出
+ *   - 0.16 的后台任务可能让旧工具继续运行，只要求它最终离开 running
  *
  * 注意：本脚本与 daemon 内插件进程各自持有注册表内存副本；
  * 跑完后建议执行 `paseo plugin reload paseo-bytheway` 让 daemon 侧重读注册表。
  */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, removeThread } from "../server/threads";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
+interface ToolRow {
+  callId: string;
+  name: string;
+  status: string;
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,14 +39,17 @@ async function waitUserMessage(handle: AgentHandle, marker: string, timeoutMs: n
   return false;
 }
 
-/** 工具调用状态（interrupt 应把进行中的工具标记为 canceled）。 */
-async function toolStatuses(handle: AgentHandle): Promise<string[]> {
+async function toolRows(handle: AgentHandle): Promise<ToolRow[]> {
   const page = await handle.timeline.refetch({ direction: "tail", limit: 40 });
   return page.entries
     .filter((entry) => (entry.item as { type: string }).type === "tool_call")
     .map((entry) => {
-      const item = entry.item as { name?: string; status?: string };
-      return `${item.name ?? "?"}:${item.status ?? "?"}`;
+      const item = entry.item as { callId?: string; name?: string; status?: string };
+      return {
+        callId: item.callId ?? "?",
+        name: item.name ?? "?",
+        status: item.status ?? "?",
+      };
     });
 }
 
@@ -51,23 +57,14 @@ async function toolStatuses(handle: AgentHandle): Promise<string[]> {
 async function waitToolRunning(handle: AgentHandle, timeoutMs: number): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    if ((await toolStatuses(handle)).some((entry) => entry.endsWith(":running"))) return;
+    if ((await toolRows(handle)).some((entry) => entry.status === "running")) return;
     await sleep(1000);
   }
   throw new Error("未观察到进行中的工具调用");
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-busy-behavior-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-busy-behavior-check");
   const listing = await client.agents.list({});
   const candidates = listing.entries.filter(
     (entry: { agent: { workspaceId?: string; archivedAt?: string | null; status: string } }) =>
@@ -92,7 +89,8 @@ async function main(): Promise<void> {
 
   try {
     await waitToolRunning(handle, 120_000);
-    console.log(`[1] running, tools=${(await toolStatuses(handle)).join(",")}`);
+    const beforeRows = (await toolRows(handle)).filter((entry) => entry.status === "running");
+    console.log(`[1] running, tools=${beforeRows.map((entry) => `${entry.name}:${entry.status}`).join(",")}`);
 
     // 运行中发送：应直接打断当前回合并把新消息作为新一轮发出
     const sent = await askThread(client, settings, {
@@ -110,27 +108,28 @@ async function main(): Promise<void> {
     console.log(`[3] message in transcript=${landed}`);
     if (!landed) throw new Error("新消息未进入转录");
 
-    // 上一回合的工具应被取消
-    let tools: string[] = [];
+    // 0.16 会把被打断的 shell 留给后台任务，因此只要求旧工具最终离开 running。
+    let rows: ToolRow[] = [];
     const started = Date.now();
-    while (Date.now() - started < 20_000) {
-      tools = await toolStatuses(handle);
-      if (tools.some((entry) => entry.endsWith(":canceled"))) break;
+    while (Date.now() - started < 60_000) {
+      rows = await toolRows(handle);
+      const beforeIds = new Set(beforeRows.map((entry) => entry.callId));
+      if (rows.filter((entry) => beforeIds.has(entry.callId)).every((entry) => entry.status !== "running")) {
+        break;
+      }
       await sleep(1000);
     }
-    console.log(`[4] tools=${tools.join(",")}`);
-    if (tools.some((entry) => entry.endsWith(":running"))) {
-      throw new Error(`打断后仍有工具在运行：${tools.join(",")}`);
-    }
-    if (!tools.some((entry) => entry.endsWith(":failed") || entry.endsWith(":canceled"))) {
-      throw new Error(`打断后工具未被中止：${tools.join(",")}`);
+    console.log(`[4] tools=${rows.map((entry) => `${entry.name}:${entry.status}`).join(",")}`);
+    const beforeIds = new Set(beforeRows.map((entry) => entry.callId));
+    if (rows.filter((entry) => beforeIds.has(entry.callId)).some((entry) => entry.status === "running")) {
+      throw new Error(`打断后旧工具仍停留在 running：${rows.map((entry) => `${entry.name}:${entry.status}`).join(",")}`);
     }
 
     console.log("BUSY-BEHAVIOR OK");
   } finally {
     await removeThread(client, first.threadId);
     console.log("cleaned");
-    await client.close();
+    await daemon.close();
   }
 }
 

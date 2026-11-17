@@ -7,11 +7,10 @@ import type { EffectiveAgentConfig } from "../shared/model-configs";
 import { resolveSendBehavior, type AppliedBehavior } from "../shared/send-behavior";
 import { inheritedThinkingOptionId, resolveRequestedThinkingOptionId } from "../shared/thinking";
 import {
+  agentFeatureValues,
   defaultProviderModeId,
   inheritedProviderModeId,
   sameFeatureValues,
-  sanitizeFeatureValues,
-  snapshotFeatureValues,
   threadModeForProviderMode,
 } from "../shared/controls";
 import {
@@ -19,9 +18,7 @@ import {
   buildSnapshotText,
   buildSystemPrompt,
   detectToolsAvailable,
-  featuresToValues,
   fetchTranscriptTail,
-  pickUnattendedMode,
   PASSIVE_SNAPSHOT_BUDGET,
   PASSIVE_SNAPSHOT_MESSAGES,
 } from "./context";
@@ -29,7 +26,6 @@ import * as registry from "./registry";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
 type AgentHandle = ReturnType<PaseoApi["agents"]["ref"]>;
-type PaseoAgent = NonNullable<Awaited<ReturnType<AgentHandle["refresh"]>>>["agent"];
 type WorkspaceHandle = ReturnType<PaseoApi["workspaces"]["ref"]>;
 type CreateOptions = Parameters<WorkspaceHandle["agents"]["create"]>[0];
 type Attachment = NonNullable<CreateOptions["attachments"]>[number];
@@ -180,7 +176,7 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
     input.thinkingOptionId,
     inheritedThinking,
   );
-  const inheritedFeatureValues = provider === main.provider ? featuresToValues(main.features) : {};
+  const inheritedFeatureValues = provider === main.provider ? agentFeatureValues(main) : {};
   const selectedFeatureValues =
     input.featureValues !== undefined ? input.featureValues : inheritedFeatureValues;
   // 默认 follow 主会话：同 provider/model 时连 mode 一起继承；否则使用 provider 默认。
@@ -197,7 +193,7 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
       if (thread.state !== "open") {
         throw new Error("该侧聊已停止：可「重建并继续」，或用 /btw-new 新开线程");
       }
-      return continueThread(paseo, settings, thread, input, contextMode, main);
+      return continueThread(paseo, settings, thread, input, contextMode);
     }
   }
 
@@ -231,7 +227,6 @@ async function continueThread(
   thread: ThreadRecord,
   input: AskInput,
   contextMode: ContextModeInfo,
-  main: PaseoAgent,
 ): Promise<AskResult> {
   const handle: AgentHandle = paseo.agents.ref(thread.agentId);
   const snapshot = await handle.refresh();
@@ -282,81 +277,30 @@ async function continueThread(
     }
   }
 
-  // 模型 / 思考 / mode / feature 变更：通过辅助 agent 调 MCP update_agent 原地生效
-  let nextModel = thread.model;
-  let nextThinkingOptionId = thread.thinkingOptionId;
-  let nextModeId = agent.currentModeId ?? thread.modeId;
-  const actualFeatureValues = snapshotFeatureValues(agent.features);
-  let nextFeatureValues =
-    Object.keys(actualFeatureValues).length > 0 ? actualFeatureValues : thread.featureValues;
-  const runtimeChanges: {
-    model?: string;
-    thinkingOptionId?: string | null;
-    modeId?: string;
-    features?: Record<string, unknown>;
-  } = {};
-
   if (input.model) {
     const desired = splitModel(input.model);
     if (desired.provider && desired.provider !== thread.provider) {
       throw new Error("已有侧聊不能切换 provider：请用 /btw-new 新开线程再选其它 provider");
     }
-    if (desired.model !== thread.model) {
-      nextModel = desired.model;
-      runtimeChanges.model = nextModel;
-    }
   }
-
-  const modelChanged = nextModel !== thread.model;
-  const thinkingFallback = modelChanged
-    ? inheritedThinkingOptionId(thread.provider, nextModel, main)
-    : thread.thinkingOptionId;
-  nextThinkingOptionId = resolveRequestedThinkingOptionId(input.thinkingOptionId, thinkingFallback);
-  const shouldApplyThinking = input.thinkingOptionId !== undefined || modelChanged;
-  if (shouldApplyThinking) runtimeChanges.thinkingOptionId = nextThinkingOptionId;
-
-  // provider modeId 是唯一模式来源；null 表示解析为当前 provider 默认 mode。
-  if (input.modeId === null) {
-    const modes = await paseo.providers.listModes(thread.provider).catch(() => null);
-    nextModeId = defaultProviderModeId(modes?.modes ?? []) ?? nextModeId;
-  } else if (input.modeId !== undefined) {
-    nextModeId = input.modeId;
-  }
-  const messageText = input.question;
-  if (nextModeId && nextModeId !== agent.currentModeId) runtimeChanges.modeId = nextModeId;
-
-  if (input.featureValues !== undefined) {
-    nextFeatureValues = input.featureValues;
-    if (!sameFeatureValues(nextFeatureValues, actualFeatureValues)) {
-      runtimeChanges.features = nextFeatureValues;
-    }
-  }
-
-  if (Object.keys(runtimeChanges).length > 0) {
-    const switched = await switchThreadRuntime(paseo, thread, runtimeChanges);
-    if (!switched.ok) {
-      throw new Error(`运行配置切换失败：${switched.error ?? "未知原因"}`);
-    }
-    if (runtimeChanges.model) console.log(`[bytheway] thread ${thread.id} model switched to ${nextModel}`);
-    if (shouldApplyThinking) {
-      console.log(`[bytheway] thread ${thread.id} thinking switched to ${nextThinkingOptionId ?? "default"}`);
-    }
-    if (runtimeChanges.modeId) {
-      console.log(`[bytheway] thread ${thread.id} agent mode switched to ${runtimeChanges.modeId}`);
-    }
-    if (runtimeChanges.features) {
-      console.log(`[bytheway] thread ${thread.id} features updated`);
-    }
-  }
-
-  const promptMode = await promptModeForProviderMode(paseo, thread.provider, nextModeId);
-  const nextThreadMode = promptMode === "provider" ? input.mode : promptMode;
 
   const sendOptions = {
     ...(attachments.length > 0 ? { attachments } : {}),
     ...(behavior !== "send" ? { activeTurnBehavior: behavior } : {}),
   };
-  await handle.send(messageText, sendOptions);
+  await handle.send(input.question, sendOptions);
+
+  const after = await handle.refresh().catch(() => null);
+  const updated = after?.agent ?? agent;
+  const nextModel = updated.model ?? thread.model;
+  const nextModeId = updated.currentModeId ?? thread.modeId;
+  const nextThinkingOptionId = updated.thinkingOptionId ?? null;
+  const actualFeatureValues = agentFeatureValues(updated);
+  const nextFeatureValues =
+    Object.keys(actualFeatureValues).length > 0 ? actualFeatureValues : thread.featureValues;
+  const promptMode = await promptModeForProviderMode(paseo, thread.provider, nextModeId);
+  const nextThreadMode = promptMode === "provider" ? input.mode : promptMode;
+
   registry.upsertThread({
     ...thread,
     mode: nextThreadMode,
@@ -478,7 +422,7 @@ async function createThread(
       provider: input.model ? `${input.provider}/${input.model}` : input.provider,
       ...(input.modeId ? { modeId: input.modeId } : {}),
       ...(input.thinkingOptionId ? { thinkingOptionId: input.thinkingOptionId } : {}),
-      ...(Object.keys(input.featureValues).length > 0 ? { featureValues: input.featureValues } : {}),
+      ...(Object.keys(input.featureValues).length > 0 ? { options: input.featureValues } : {}),
       systemPrompt,
     },
     title,
@@ -491,7 +435,7 @@ async function createThread(
   const createdSnapshot = await paseo.agents.ref(handle.id).refresh().catch(() => null);
   const actualModeId = createdSnapshot?.agent.currentModeId ?? input.modeId;
   const actualFeatures = createdSnapshot
-    ? snapshotFeatureValues(createdSnapshot.agent.features)
+    ? agentFeatureValues(createdSnapshot.agent)
     : {};
   const recordFeatureValues =
     Object.keys(actualFeatures).length > 0 ? actualFeatures : input.featureValues;
@@ -519,120 +463,6 @@ async function createThread(
   console.log(`[bytheway] thread ${threadId} created (agent ${handle.id}, mode=${input.mode})`);
   maybeGenerateTitle(paseo, settings, record);
   return record;
-}
-
-/** 通过辅助 agent 调用 MCP update_agent，原地切换线程 agent 的模型和/或思考档。 */
-async function switchThreadRuntime(
-  paseo: PaseoApi,
-  thread: ThreadRecord,
-  changes: {
-    model?: string;
-    thinkingOptionId?: string | null;
-    modeId?: string;
-    features?: Record<string, unknown>;
-  },
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const target = await paseo.agents.ref(thread.agentId).refresh();
-    const requestedModel = changes.model ?? thread.model;
-
-    if (changes.model !== undefined) {
-      const models = await paseo.providers.listModels(thread.provider).catch(() => null);
-      if (!models?.models?.some((model) => model.id === changes.model)) {
-        return { ok: false, error: "模型不在当前 provider 目录中" };
-      }
-    }
-    if (changes.modeId !== undefined) {
-      const modes = await paseo.providers.listModes(thread.provider).catch(() => null);
-      if (!modes?.modes?.some((mode) => mode.id === changes.modeId)) {
-        return { ok: false, error: "模式不在当前 provider 目录中" };
-      }
-    }
-    if (changes.thinkingOptionId !== undefined && changes.thinkingOptionId !== null) {
-      const models = await paseo.providers.listModels(thread.provider).catch(() => null);
-      const model = models?.models?.find((entry) => entry.id === requestedModel);
-      if (!model?.thinkingOptions?.some((option) => option.id === changes.thinkingOptionId)) {
-        return { ok: false, error: "思考档不在当前模型目录中" };
-      }
-    }
-
-    let safeFeatures = changes.features;
-    const requestedFeatures = changes.features;
-    if (requestedFeatures !== undefined) {
-      const cwd = target?.agent.cwd;
-      if (!cwd) return { ok: false, error: "无法获取工作目录以校验功能项" };
-      const featureResult = await paseo.providers
-        .listFeatures({
-          provider: `${thread.provider}/${requestedModel}`,
-          cwd,
-          ...(changes.modeId ? { modeId: changes.modeId } : {}),
-          ...(changes.thinkingOptionId ? { thinkingOptionId: changes.thinkingOptionId } : {}),
-        })
-        .catch(() => null);
-      if (!featureResult) return { ok: false, error: "无法获取当前模型的功能项目录" };
-      safeFeatures = sanitizeFeatureValues(requestedFeatures, featureResult.features ?? []);
-      if (!sameFeatureValues(safeFeatures, requestedFeatures)) {
-        return { ok: false, error: "功能项包含当前模型不支持的键或值" };
-      }
-    }
-
-    const helperModeId = await pickUnattendedMode(paseo, thread.provider);
-    const helperFeatureValues = featuresToValues(target?.agent.features);
-    const helper = await paseo.workspaces.ref(thread.workspaceId).agents.create({
-      config: {
-        provider: thread.model ? `${thread.provider}/${thread.model}` : thread.provider,
-        ...(helperModeId ? { modeId: helperModeId } : {}),
-        ...(Object.keys(helperFeatureValues).length > 0 ? { featureValues: helperFeatureValues } : {}),
-      },
-      title: "[侧聊·切换运行配置]",
-      labels: { sidekick: "helper" },
-    });
-    try {
-      const settings = JSON.stringify({
-        ...(changes.model !== undefined ? { model: changes.model } : {}),
-        ...(changes.thinkingOptionId !== undefined ? { thinkingOptionId: changes.thinkingOptionId } : {}),
-        ...(changes.modeId !== undefined ? { modeId: changes.modeId } : {}),
-        ...(safeFeatures !== undefined ? { features: safeFeatures } : {}),
-      });
-      const result = await helper.run(
-        `请调用 MCP 工具 update_agent，参数 agentId="${thread.agentId}"、settings=${settings}，把这些运行配置应用到该 agent。成功后只回复：done；如果 update_agent 工具不可用，只回复：tool-unavailable。`,
-        { timeoutMs: 60_000 },
-      );
-      if ((result.lastMessage ?? "").toLowerCase().includes("tool-unavailable")) {
-        return { ok: false, error: "Paseo 工具不可用（需开启 daemon.mcp.injectIntoAgents）" };
-      }
-      const snapshot = await paseo.agents.ref(thread.agentId).refresh();
-      const agent = snapshot?.agent;
-      if (changes.model !== undefined && agent?.model !== changes.model) {
-        return { ok: false, error: `模型切换未生效（当前仍是 ${agent?.model ?? "未知"}）` };
-      }
-      if (changes.modeId !== undefined && agent?.currentModeId !== changes.modeId) {
-        return { ok: false, error: `模式切换未生效（当前仍是 ${agent?.currentModeId ?? "未知"}）` };
-      }
-      if (
-        changes.thinkingOptionId !== undefined &&
-        (agent?.thinkingOptionId ?? null) !== changes.thinkingOptionId
-      ) {
-        return {
-          ok: false,
-          error: `思考档切换未生效（当前仍是 ${agent?.thinkingOptionId ?? "default"}）`,
-        };
-      }
-      if (safeFeatures !== undefined) {
-        const actualFeatures = snapshotFeatureValues(agent?.features);
-        for (const [id, value] of Object.entries(safeFeatures)) {
-          if (!Object.is(actualFeatures[id], value)) {
-            return { ok: false, error: `功能项 ${id} 切换未生效` };
-          }
-        }
-      }
-      return { ok: true };
-    } finally {
-      void helper.archive().catch(() => {});
-    }
-  } catch (error) {
-    return { ok: false, error: message(error) };
-  }
 }
 
 /**
@@ -665,6 +495,7 @@ function maybeGenerateTitle(paseo: PaseoApi, settings: SidekickSettings, record:
         config: { provider: titleModel ? `${titleProvider}/${titleModel}` : titleProvider },
         title: "[侧聊·命名]",
         labels: { sidekick: "helper" },
+        background: true,
       });
       try {
         const result = await helper.run(
@@ -769,7 +600,7 @@ export async function rebuildThread(
     thinkingOverride,
     fallbackThinkingOptionId,
   );
-  const inheritedFeatureValues = main && provider === main.provider ? featuresToValues(main.features) : {};
+  const inheritedFeatureValues = main && provider === main.provider ? agentFeatureValues(main) : {};
   const fallbackFeatureValues =
     provider === thread.provider && model === thread.model
       ? thread.featureValues
@@ -824,7 +655,7 @@ export async function rebuildThread(
       provider: model ? `${provider}/${model}` : provider,
       ...(nextModeId ? { modeId: nextModeId } : {}),
       ...(nextThinkingOptionId ? { thinkingOptionId: nextThinkingOptionId } : {}),
-      ...(Object.keys(nextFeatureValues).length > 0 ? { featureValues: nextFeatureValues } : {}),
+      ...(Object.keys(nextFeatureValues).length > 0 ? { options: nextFeatureValues } : {}),
       systemPrompt,
     },
     title: thread.title,
@@ -837,7 +668,7 @@ export async function rebuildThread(
   const createdSnapshot = await paseo.agents.ref(handle.id).refresh().catch(() => null);
   const actualModeId = createdSnapshot?.agent.currentModeId ?? nextModeId;
   const actualFeatures = createdSnapshot
-    ? snapshotFeatureValues(createdSnapshot.agent.features)
+    ? agentFeatureValues(createdSnapshot.agent)
     : {};
   const record: ThreadRecord = {
     ...thread,
@@ -879,6 +710,7 @@ export async function cancelThread(
       title: "[侧聊·取消辅助]",
       prompt: `请调用 MCP 工具 cancel_agent，参数 agentId=${thread.agentId}，中止该 agent 的当前运行。成功后回复 done；如果工具不可用请回复 tool-unavailable。`,
       labels: { sidekick: "helper" },
+      background: true,
     });
     // 辅助 agent 用完即弃（90 秒后归档，尽力而为）
     const helperId = helper.id;
@@ -989,6 +821,7 @@ export async function reapOrphans(paseo: PaseoApi): Promise<void> {
     // 遗留的辅助 agent（取消辅助 / 命名辅助）：非运行中且超过 10 分钟未更新则回收
     const helpers = await paseo.agents.list({
       filter: { labels: { sidekick: "helper" }, includeArchived: false },
+      includeBackground: true,
     });
     const cutoff = Date.now() - 10 * 60_000;
     for (const entry of helpers.entries) {
@@ -1033,7 +866,7 @@ export async function refreshThreadStates(
         } else {
           const actualModeId = agent.currentModeId ?? thread.modeId;
           const actualThinkingOptionId = agent.thinkingOptionId ?? null;
-          const actualFeatures = snapshotFeatureValues(agent.features);
+          const actualFeatures = agentFeatureValues(agent);
           const modeDrifted = actualModeId !== thread.modeId;
           const thinkingDrifted = actualThinkingOptionId !== thread.thinkingOptionId;
           const featuresDrifted =

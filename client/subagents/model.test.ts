@@ -17,7 +17,7 @@ function paseoAgent(overrides: Partial<PaseoSubagentAgentLike> = {}): PaseoSubag
     id: "child-1",
     title: "Research",
     provider: "opencode",
-    model: "deepseek-v4.1-flash",
+    model: "model-a",
     status: "running",
     createdAt: "2026-10-27T01:00:00.000Z",
     updatedAt: "2026-10-27T01:00:05.000Z",

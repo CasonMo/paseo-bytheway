@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSystemPrompt,
-  chooseUnattendedMode,
   featuresToValues,
   type PaseoApi,
 } from "./context";
@@ -20,36 +19,6 @@ describe("featuresToValues", () => {
     expect(featuresToValues(undefined)).toEqual({});
     expect(featuresToValues(null)).toEqual({});
     expect(featuresToValues([])).toEqual({});
-  });
-});
-
-describe("pickUnattendedMode", () => {
-  it("优先选择 danger 级完全放行模式", () => {
-    expect(
-      chooseUnattendedMode([
-        { id: "default", label: "Always Ask", colorTier: "safe" },
-        { id: "bypassPermissions", label: "Bypass", colorTier: "dangerous" },
-      ]),
-    ).toBe("bypassPermissions");
-  });
-
-  it("回退到 auto / build 类可执行模式", () => {
-    expect(
-      chooseUnattendedMode([
-        { id: "plan", label: "Plan" },
-        { id: "auto", label: "Auto mode" },
-      ]),
-    ).toBe("auto");
-    expect(
-      chooseUnattendedMode([
-        { id: "plan", label: "Plan" },
-        { id: "build", label: "Build" },
-      ]),
-    ).toBe("build");
-  });
-
-  it("没有非 plan 模式时返回 undefined", () => {
-    expect(chooseUnattendedMode([{ id: "plan", label: "Plan" }])).toBeUndefined();
   });
 });
 

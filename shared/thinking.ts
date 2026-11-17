@@ -31,7 +31,7 @@ export type ThinkingChoice =
  * 把 UI 选择转成 threads.ask/rebuild 的 thinkingOptionId。
  * - 新线程 follow：不传，让服务端在发送时读取主会话最新值；
  * - 已有线程 follow：解析成主会话当前值（模型不同则回到模型默认）；
- * - 与当前线程值一致：不传，避免无意义的辅助 agent 切换。
+ * - 与当前线程值一致：不传，避免无意义的运行配置切换。
  */
 export function resolveThinkingRequest(
   choice: ThinkingChoice,

@@ -13,7 +13,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 - **权限内联处理**：新线程继承主会话的 Mode、思考档与 provider features（如 opencode `auto_accept`），权限默认与主会话一致；面板内批准/拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后统一提交）；默认跟随主会话由 Paseo 原生处理，可选策略（询问+超时自动拒绝 / 自动放行只读 / 全部拒绝）。
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
 - **运行中**：按钮互斥——回答中只显示「停止」，空闲时只显示「发送」；回答中按 Enter 发送会打断当前回答、重新开始一轮（toast 提示）。
-- **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。
+- **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。切换直接走 Paseo 0.16 的 composer/agent 控制接口，毫秒级生效，不再等待辅助 agent。
 - **模型配置记忆**：默认开启。按 `provider/model` 记住用户实际使用过的 Mode、思考档和 Features；下次选到同一模型自动恢复，不同模型互不影响。可在设置中关闭。以「发送/重建成功后实际生效的值」为准，选择「跟随主会话」不会套用模型记忆。
 - **Provider 原生控制**：不再用 Chat/Build 归组，而是动态读取 Paseo 的 modes、thinkingOptions 和 features。Codex、Claude、OpenCode、Pi、Qoder 等 provider 返回什么，侧聊就显示什么；没有对应能力的 provider 自动隐藏控件。
 - **思考模式**：输入区「思考」按钮默认跟随主会话；同模型时继承主会话当前思考档，换模型时使用目标模型默认档。已有线程原地切换，subagent ID 不变。
@@ -35,7 +35,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 npm install
 npm run typecheck   # TypeScript
 npm test            # vitest（reducer / 转换逻辑 / 发送行为）
-npm run smoke       # 端到端：直连本地 daemon（需 PASEO_PASSWORD 或 ~/.paseo/local-credential）
+npm run smoke       # 端到端：直连本地 daemon（使用 ~/.paseo/local-credential）
 npm run busy-behavior-check  # 运行中发送：busy→interrupt 当前轮并 toast 提示（需本地 daemon）
 npm run thinking-switch-check # 校验同一 subagent 的思考档真实切换（需本地 daemon）
 npm run provider-controls-check # 校验动态 mode/feature 原地切换（需本地 daemon）
@@ -60,4 +60,5 @@ Panel (client) ── RPC（创建/发送/归档/重建…）──▶ Daemon �
 - 时间线用纯函数 reducer 处理增量/替换/断线恢复；
 - Subagent 列表由 Paseo 子 agent 快照与 `agent.provider_subagents.update` 事件合并而来；
 - 模型配置记忆保存在 `model-configs.json`（只含 Mode / 思考档 / Features 等控制项，不含对话内容），最多保留最近 50 个模型；
+- 已有线程的模型/思考/Mode/Features 切换由面板直接调用 Paseo composer 控制接口；AI 标题与实验性取消使用 `background: true` 的临时 helper，不会出现在默认列表、tab 或通知里；
 - 上下文模式：`linked`（默认，agent id 直连）/ `passive`（被动增量同步）/ 快照关闭。

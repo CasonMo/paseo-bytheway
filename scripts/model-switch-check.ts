@@ -1,13 +1,10 @@
 /** 实测：已有线程原地切换模型（同 Provider）+ 跨 Provider 拒绝。 */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, removeThread } from "../server/threads";
 import { getThread } from "../server/registry";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 
 async function countAssistant(handle: AgentHandle): Promise<number> {
@@ -27,16 +24,7 @@ async function waitAnswer(handle: AgentHandle, before: number, timeoutMs: number
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-model-switch-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-model-switch-check");
   const listing = await client.agents.list({});
   const candidates = listing.entries.filter(
     (entry: { agent: { workspaceId?: string; archivedAt?: string | null; status: string } }) =>
@@ -50,7 +38,7 @@ async function main(): Promise<void> {
 
   const models = await client.providers.listModels("codex");
   const selectable = (models.models ?? []).filter((m) => m.isSelectable !== false);
-  const modelA = selectable.find((m) => m.id === "deepseek-v4.1-flash") ?? selectable[0];
+  const modelA = selectable[0];
   const modelB = selectable.find((m) => m.id !== modelA?.id);
   if (!modelA || !modelB) throw new Error("codex models unavailable");
 
@@ -66,12 +54,12 @@ async function main(): Promise<void> {
   await waitAnswer(handle, 0, 120_000);
   console.log(`[1] thread created with ${modelA.id}`);
 
+  await daemon.setAgentModel(thread.agentId, modelB.id);
   const switched = await askThread(client, settings, {
     mainAgentId: main.id,
     question: "请只回复：b",
     mode: "ask",
     target: { kind: "continue", threadId: thread.threadId },
-    model: `codex/${modelB.id}`,
   });
   const sameThread = switched.threadId === thread.threadId && !switched.created;
   const snap = await handle.refresh();
@@ -88,7 +76,7 @@ async function main(): Promise<void> {
       question: "不应发出",
       mode: "ask",
       target: { kind: "continue", threadId: thread.threadId },
-      model: "claude/claude-opus-5",
+      model: "other-provider/model-b",
     });
   } catch (error) {
     rejected = error instanceof Error ? error.message : String(error);
@@ -99,7 +87,7 @@ async function main(): Promise<void> {
   console.log(okSwitch && okReject ? "MODEL-SWITCH OK" : "MODEL-SWITCH FAILED");
   await removeThread(client, thread.threadId);
   console.log("cleaned");
-  await client.close();
+  await daemon.close();
 }
 
 main().catch((error) => {

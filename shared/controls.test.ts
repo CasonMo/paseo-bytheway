@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentFeatureValues,
   defaultProviderModeId,
   featureDefaults,
   inheritedProviderModeId,
@@ -72,6 +73,31 @@ describe("snapshotFeatureValues", () => {
   });
 });
 
+describe("agentFeatureValues", () => {
+  it("prefers features when present", () => {
+    expect(
+      agentFeatureValues({
+        features: [{ id: "plan_mode", value: true }],
+        options: { plan_mode: false, service_tier: "priority" },
+      }),
+    ).toEqual({ plan_mode: true });
+  });
+
+  it("falls back to options", () => {
+    expect(
+      agentFeatureValues({
+        features: null,
+        options: { plan_mode: false, service_tier: "priority" },
+      }),
+    ).toEqual({ plan_mode: false, service_tier: "priority" });
+  });
+
+  it("tolerates missing snapshots", () => {
+    expect(agentFeatureValues(null)).toEqual({});
+    expect(agentFeatureValues({})).toEqual({});
+  });
+});
+
 describe("sameFeatureValues", () => {
   it("compares supported primitive feature maps", () => {
     expect(sameFeatureValues({ a: true, b: "fast" }, { b: "fast", a: true })).toBe(true);
@@ -83,9 +109,9 @@ describe("sameFeatureValues", () => {
 describe("inheritedProviderModeId", () => {
   it("inherits the main session mode when provider and model match", () => {
     expect(
-      inheritedProviderModeId("codex", "deepseek-v4.1-flash", {
+      inheritedProviderModeId("codex", "model-a", {
         provider: "codex",
-        model: "deepseek-v4.1-flash",
+        model: "model-a",
         currentModeId: "auto-review",
       }),
     ).toBe("auto-review");
@@ -93,9 +119,9 @@ describe("inheritedProviderModeId", () => {
 
   it("uses provider default when the model differs", () => {
     expect(
-      inheritedProviderModeId("codex", "deepseek-v4.1-flash-1017", {
+      inheritedProviderModeId("codex", "model-b", {
         provider: "codex",
-        model: "deepseek-v4.1-flash",
+        model: "model-a",
         currentModeId: "auto-review",
       }),
     ).toBeNull();

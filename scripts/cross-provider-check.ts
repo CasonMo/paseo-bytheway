@@ -1,11 +1,8 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, removeThread } from "../server/threads";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 
 async function waitAnswer(handle: AgentHandle, timeoutMs: number): Promise<void> {
@@ -22,16 +19,7 @@ async function waitAnswer(handle: AgentHandle, timeoutMs: number): Promise<void>
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-cross-provider-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-cross-provider-check");
 
   const listing = await client.agents.list({});
   const candidates = listing.entries.filter(
@@ -71,7 +59,7 @@ async function main(): Promise<void> {
   console.log(ok ? "CROSS-PROVIDER OK" : "CROSS-PROVIDER FAILED");
   await removeThread(client, thread.threadId);
   console.log("cleaned");
-  await client.close();
+  await daemon.close();
 }
 
 main().catch((error) => {

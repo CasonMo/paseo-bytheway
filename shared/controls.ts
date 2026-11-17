@@ -67,6 +67,21 @@ export function snapshotFeatureValues(
   return values;
 }
 
+/** 0.16 起优先读 agent.options；旧宿主仍回退到 agent.features。 */
+export function agentFeatureValues(
+  agent:
+    | {
+        features?: ReadonlyArray<{ id: string; value?: boolean | string | null }> | null;
+        options?: Record<string, unknown> | null;
+      }
+    | null
+    | undefined,
+): Record<string, unknown> {
+  const fromFeatures = snapshotFeatureValues(agent?.features);
+  if (Object.keys(fromFeatures).length > 0) return fromFeatures;
+  return agent?.options && typeof agent.options === "object" ? { ...agent.options } : {};
+}
+
 export function sameFeatureValues(
   left: Record<string, unknown>,
   right: Record<string, unknown>,

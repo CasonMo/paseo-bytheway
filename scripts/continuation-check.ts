@@ -1,12 +1,9 @@
 /** 实测：接续线程（新开时通过 get_agent_activity 继承旧线程上下文）。 */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, removeThread } from "../server/threads";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 
 async function countAssistant(handle: AgentHandle): Promise<number> {
@@ -33,16 +30,7 @@ async function waitAnswer(handle: AgentHandle, before: number, timeoutMs: number
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-cont-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-cont-check");
   const listing = await client.agents.list({});
   const candidates = listing.entries.filter(
     (entry: { agent: { workspaceId?: string; archivedAt?: string | null; status: string } }) =>
@@ -81,7 +69,7 @@ async function main(): Promise<void> {
   await removeThread(client, first.threadId);
   await removeThread(client, second.threadId);
   console.log("cleaned");
-  await client.close();
+  await daemon.close();
 }
 
 main().catch((error) => {

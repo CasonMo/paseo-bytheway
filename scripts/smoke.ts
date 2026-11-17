@@ -5,17 +5,13 @@
  * 注意：本脚本与 daemon 内插件进程各自持有注册表内存副本；
  * 跑完后建议执行 `paseo plugin reload paseo-bytheway` 让 daemon 侧重读注册表。
  */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
 import { sidekickSettings } from "../shared/settings";
 import { askThread, archiveThread, rebuildThread, removeThread } from "../server/threads";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 
-const CREDENTIAL = join(homedir(), ".paseo", "local-credential");
 const URL = process.env.SIDEKICK_SMOKE_URL ?? "ws://127.0.0.1:6767/ws";
 
 function fail(message: string): never {
@@ -54,22 +50,7 @@ async function waitNewAnswer(handle: AgentHandle, beforeCount: number, timeoutMs
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    (() => {
-      try {
-        return readFileSync(CREDENTIAL, "utf8").trim();
-      } catch {
-        return fail("缺少凭据：请设置 PASEO_PASSWORD（~/.zshenv）");
-      }
-    })();
-  const client = createPaseoClient({
-    url: URL,
-    password: credential,
-    clientId: "bytheway-smoke",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-smoke", URL);
   console.log("connected");
 
   const listing = await client.agents.list({});
@@ -162,7 +143,7 @@ async function main(): Promise<void> {
         // best effort
       }
     }
-    await client.close().catch(() => {});
+    await daemon.close().catch(() => {});
   }
 }
 

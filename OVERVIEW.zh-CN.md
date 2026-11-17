@@ -20,7 +20,7 @@
 - **模型配置记忆默认开启**：每次发送或重建成功后，按 `provider/model` 记住实际生效的 Mode、思考档和 Features；下次在模型选择器中选到同一模型时自动恢复。不同模型互不影响；选择「跟随主会话」不会套用模型记忆。可在设置中关闭；
 - 输入框上方的 **Subagent** 胶囊显示当前侧聊线程的子线程数量与运行状态：点开可打开详情；Paseo 子 agent 可分离或归档，已完成的 subagent 可一键清理；
 - 新线程默认跟随主会话的 mode、thinking 和 feature 值；模型/provider 不一致时使用目标 provider/model 默认值；
-- 已有线程切换 Mode、思考档或功能项会原地更新对应 subagent，不更换 agent；
+- 已有线程切换模型、Mode、思考档或功能项会通过 Paseo 0.16 的 composer/agent 控制接口原地更新对应 subagent，毫秒级生效，不更换 agent；
 - `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
 - Command Center 可打开「ByTheWay 侧聊」面板与设置页；
 - 线程下拉列表可一键复制该线程的 Agent ID（用于把 agent 交给其它工具）；
@@ -45,7 +45,7 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 - 权限策略（跟随主会话 / 询问+超时自动拒绝 / 自动放行只读 / 全部拒绝）
 - 总并发上限与实验性取消开关
 
-无需账号或额外密钥：插件复用 Paseo 已配置的 agent provider。要求 Paseo 0.13.0-beta.1 或更高版本；daemon 可运行在 Paseo 支持的任意平台，界面在桌面、Web 与移动端可用。
+无需账号或额外密钥：插件复用 Paseo 已配置的 agent provider。要求 Paseo 0.16.0 或更高版本；daemon 可运行在 Paseo 支持的任意平台，界面在桌面、Web 与移动端可用。
 
 ## 数据与权限
 
@@ -58,8 +58,8 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 ## 已知限制
 
 - 线程绑定创建它的 daemon 与主会话；主会话被归档后线程标记为已停止，可「重建并继续」；
-- 已有线程在同一 Provider 内原地切换模型（Provider 在创建线程时固定，需要其它 Provider 请新开线程）；Mode、思考档和 features 切换同样原地生效，会通过临时 helper agent 调用 Paseo 的 `update_agent`，并刷新同一个 subagent 的快照校验是否真的生效；任何切换失败时消息不会发出，面板会显示原因；
-- AI 标题生成、实验性取消与模型/思考/模式切换会短暂创建一个辅助 agent（用后即自动归档，可能短暂出现在 agent 列表中）；
+- 已有线程在同一 Provider 内原地切换模型（Provider 在创建线程时固定，需要其它 Provider 请新开线程）；Mode、思考档和 features 切换同样原地生效，直接调用 Paseo 0.16 的 composer/agent 控制接口，并刷新同一个 subagent 的快照确认实际值；任何切换失败时消息不会发出，面板会显示原因；
+- AI 标题生成与实验性取消会短暂创建一个 `background: true` 的辅助 agent（用后即自动归档，不会出现在默认列表、tab、父 subagent track 或通知中）；
 - 同一时刻运行中的侧聊受并发上限约束；运行中的线程过多时新请求会被拒绝并提示。
 - Provider 原生 subagent 的详情页由 Paseo 主面板提供；宿主尚未暴露 provider subagent 深链时，点击此类行会先打开父侧聊会话，再从主面板的 Subagents 胶囊进入详情。Paseo 子 agent 可直接打开。
 - Subagent 胶囊当前只汇总当前 host/daemon 上的 Paseo 子 agent 与 provider subagent；跨 host 委派的 agent 暂不显示。

@@ -1,5 +1,5 @@
 import type { PluginAgentPanelProps } from "@getpaseo/plugin/client";
-import { useAgent, usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { useAgent, useComposers, usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
 import {
@@ -24,10 +24,11 @@ import {
   type ThinkingChoice,
 } from "../shared/thinking";
 import {
+  agentFeatureValues,
+  defaultProviderModeId,
   mergeFeatureDefaults,
   sanitizeFeatureValues,
   sameFeatureValues,
-  snapshotFeatureValues,
   threadModeForProviderMode,
   type ProviderFeatureLike,
   type ProviderModeLike,
@@ -169,7 +170,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         if (cancelled || !snapshot) return;
         setMainRuntime({
           modeId: snapshot.agent.currentModeId ?? null,
-          featureValues: snapshotFeatureValues(snapshot.agent.features),
+          featureValues: agentFeatureValues(snapshot.agent),
         });
       })
       .catch(() => {});
@@ -255,6 +256,11 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     () => threads.find((thread) => thread.id === selectedId) ?? null,
     [threads, selectedId],
   );
+  const composerSelector = useMemo(
+    () => ({ agentId: selected?.agentId ?? "" }),
+    [selected?.agentId],
+  );
+  const threadComposer = useComposers(composerSelector)[0] ?? null;
 
   /** 服务端权威的线程运行态（列表 RPC 轮询 + running 标记）。 */
   const statusOf = (thread: ThreadView): ThreadRuntimeStatus =>
@@ -720,7 +726,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       ? null
       : featureCatalog.find((feature) => feature.id === featureModalId) ?? null;
 
-  // 同一 Provider 换模型 = 原地切换；模式切换 = 随消息携带指令；跨 Provider 仅新线程可用
+  // 同一 Provider 换模型/思考/Mode/Features = 原地经 composer 应用；跨 Provider 仅新线程可用
   const willContinue =
     Boolean(selected) && selected?.state === "open" && !modelChangedOtherProvider;
   const thinkingRequest = resolveThinkingRequest(
@@ -757,6 +763,54 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const sentModeId = followNewThreadConfig && !modeTouched ? undefined : selectedModeId;
   const sentFeatureValues =
     controlsReady && !(followNewThreadConfig && !featuresTouched) ? featureValues : undefined;
+  const defaultTargetThinkingId =
+    targetModelOption?.defaultThinkingOptionId ??
+    targetThinkingOptions.find((option) => option.isDefault)?.id ??
+    null;
+
+  const applyThreadConfig = useCallback(async (): Promise<void> => {
+    if (!selected || selected.state !== "open" || !willContinue) return;
+    if (!modelChangedSameProvider && !thinkingWillChange && !controlsChanged) return;
+    if (!threadComposer) {
+      throw new Error("运行配置切换失败：无法连接该侧聊 agent，请刷新后重试");
+    }
+    try {
+      if (modelChangedSameProvider) await threadComposer.setModel(targetModel);
+      if (thinkingWillChange) {
+        const thinkingId = thinkingRequest ?? defaultTargetThinkingId;
+        if (!(modelChangedSameProvider && thinkingId === null)) {
+          await threadComposer.setThinking(thinkingId as unknown as string);
+        }
+      }
+      if (modeControlChanged) {
+        const modeId = selectedModeId ?? defaultProviderModeId(modeCatalog);
+        if (!modeId) throw new Error("无法解析 provider 默认模式");
+        await threadComposer.setMode(modeId);
+      }
+      if (featureControlChanged) {
+        await threadComposer.setOptions(
+          featureValues as Parameters<typeof threadComposer.setOptions>[0],
+        );
+      }
+    } catch (error) {
+      throw new Error(`运行配置切换失败：${messageOf(error)}`);
+    }
+  }, [
+    selected,
+    willContinue,
+    modelChangedSameProvider,
+    thinkingWillChange,
+    controlsChanged,
+    threadComposer,
+    targetModel,
+    thinkingRequest,
+    defaultTargetThinkingId,
+    modeControlChanged,
+    selectedModeId,
+    modeCatalog,
+    featureControlChanged,
+    featureValues,
+  ]);
 
   const send = useCallback(async () => {
     const question = input.trim();
@@ -764,25 +818,34 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     setSending(true);
     setSendError(null);
     try {
+      await applyThreadConfig();
       const result =
         selected && selected.state === "stopped"
           ? await rebuildRpc({
               threadId: selected.id,
               question,
-              model: modelOverride ?? undefined,
-              modeId: sentModeId,
-              ...(thinkingRequest !== undefined ? { thinkingOptionId: thinkingRequest } : {}),
-              ...(sentFeatureValues !== undefined ? { featureValues: sentFeatureValues } : {}),
+              ...(willContinue
+                ? {}
+                : {
+                    model: modelOverride ?? undefined,
+                    modeId: sentModeId,
+                    ...(thinkingRequest !== undefined ? { thinkingOptionId: thinkingRequest } : {}),
+                    ...(sentFeatureValues !== undefined ? { featureValues: sentFeatureValues } : {}),
+                  }),
             })
           : await askRpc({
               mainAgentId: agentId,
               question,
               mode: requestThreadMode,
               target: willContinue && selected ? { kind: "continue", threadId: selected.id } : { kind: "new" },
-              model: modelOverride ?? undefined,
-              modeId: sentModeId,
-              ...(thinkingRequest !== undefined ? { thinkingOptionId: thinkingRequest } : {}),
-              ...(sentFeatureValues !== undefined ? { featureValues: sentFeatureValues } : {}),
+              ...(willContinue
+                ? {}
+                : {
+                    model: modelOverride ?? undefined,
+                    modeId: sentModeId,
+                    ...(thinkingRequest !== undefined ? { thinkingOptionId: thinkingRequest } : {}),
+                    ...(sentFeatureValues !== undefined ? { featureValues: sentFeatureValues } : {}),
+                  }),
               continuationOf:
                 !willContinue && selected && selected.state === "open" ? selected.agentId : undefined,
               clientRequestId: newRequestId(),
@@ -804,6 +867,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   }, [
     input,
     sending,
+    applyThreadConfig,
     askRpc,
     rebuildRpc,
     agentId,

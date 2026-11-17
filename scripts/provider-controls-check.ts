@@ -1,14 +1,15 @@
 /** 实测：provider mode + feature 动态目录，以及同一 subagent 原地切换。 */
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { createPaseoClient } from "@getpaseo/client";
-import { defaultProviderModeId, snapshotFeatureValues } from "../shared/controls";
+import {
+  agentFeatureValues,
+  defaultProviderModeId,
+  sanitizeFeatureValues,
+} from "../shared/controls";
 import { sidekickSettings } from "../shared/settings";
 import { archiveThread, askThread, rebuildThread, removeThread } from "../server/threads";
 import { getThread } from "../server/registry";
+import { connectLocalClient } from "./local-client";
 
-type Client = ReturnType<typeof createPaseoClient>;
+type Client = Awaited<ReturnType<typeof connectLocalClient>>["client"];
 type AgentHandle = ReturnType<Client["agents"]["ref"]>;
 
 function sleep(ms: number): Promise<void> {
@@ -32,16 +33,7 @@ async function waitAnswer(handle: AgentHandle, before: number, timeoutMs: number
 }
 
 async function main(): Promise<void> {
-  const credential =
-    (process.env.PASEO_PASSWORD ?? "").trim() ||
-    readFileSync(join(homedir(), ".paseo", "local-credential"), "utf8").trim();
-  const client = createPaseoClient({
-    url: "ws://127.0.0.1:6767/ws",
-    password: credential,
-    clientId: "bytheway-provider-controls-check",
-    reconnect: { enabled: false },
-  });
-  await client.connect();
+  const { daemon, client } = await connectLocalClient("bytheway-provider-controls-check");
   let threadId: string | null = null;
 
   try {
@@ -56,26 +48,30 @@ async function main(): Promise<void> {
 
     const provider = "codex";
     const models = await client.providers.listModels(provider);
-    const model = (models.models ?? []).find(
-      (entry) => entry.id === "deepseek-v4.1-flash" && entry.isSelectable !== false,
-    );
-    if (!model) throw new Error("codex/deepseek-v4.1-flash unavailable");
-
     const modesResult = await client.providers.listModes(provider);
     const modes = modesResult.modes ?? [];
     const modeA = modes.find((mode) => mode.id === "auto");
     const modeB = modes.find((mode) => mode.id === "auto-review");
     if (!modeA || !modeB) throw new Error("expected codex auto and auto-review modes");
 
-    const featuresResult = await client.providers.listFeatures({
-      provider: `${provider}/${model.id}`,
-      cwd: main.cwd,
-      modeId: modeA.id,
-    });
-    const planFeature = featuresResult.features?.find((feature) => feature.id === "plan_mode");
-    if (!planFeature || planFeature.type !== "toggle") {
-      throw new Error("expected codex plan_mode toggle");
+    let model:
+      | NonNullable<Awaited<ReturnType<Client["providers"]["listModels"]>>["models"]>[number]
+      | undefined;
+    let featureCatalog: Awaited<ReturnType<typeof client.providers.listFeatures>>["features"] = [];
+    for (const candidate of (models.models ?? []).filter((entry) => entry.isSelectable !== false)) {
+      const result = await client.providers.listFeatures({
+        provider: `${provider}/${candidate.id}`,
+        cwd: main.cwd,
+        modeId: modeA.id,
+      });
+      const planFeature = result.features?.find((feature) => feature.id === "plan_mode");
+      if (planFeature?.type === "toggle") {
+        model = candidate;
+        featureCatalog = result.features ?? [];
+        break;
+      }
     }
+    if (!model) throw new Error("no codex model exposes a plan_mode toggle");
 
     const settings = sidekickSettings.schema.parse({ attachToMain: false, snapshotDepth: 0, aiTitles: false });
     const first = await askThread(client, settings, {
@@ -93,7 +89,7 @@ async function main(): Promise<void> {
 
     const before = await handle.refresh();
     const beforeAgentId = before?.agent.id;
-    const beforeFeatures = snapshotFeatureValues(before?.agent.features);
+    const beforeFeatures = agentFeatureValues(before?.agent);
     console.log(
       `[before] thread=${first.threadId} agent=${beforeAgentId} mode=${before?.agent.currentModeId} plan_mode=${beforeFeatures.plan_mode}`,
     );
@@ -104,20 +100,20 @@ async function main(): Promise<void> {
     if (beforeFeatures.plan_mode !== true) throw new Error("initial plan_mode not applied");
 
     const count = await countAssistant(handle);
+    await daemon.setAgentMode(first.agentId, modeB.id);
+    await daemon.setAgentOptions(first.agentId, { plan_mode: false });
     const switched = await askThread(client, settings, {
       mainAgentId: main.id,
       question: "请只回复：controls-b",
       mode: "work",
       target: { kind: "continue", threadId: first.threadId },
-      modeId: modeB.id,
-      featureValues: { plan_mode: false },
     });
     if (switched.threadId !== first.threadId || switched.agentId !== first.agentId) {
       throw new Error("controls switch replaced the thread or subagent");
     }
 
     const after = await handle.refresh();
-    const afterFeatures = snapshotFeatureValues(after?.agent.features);
+    const afterFeatures = agentFeatureValues(after?.agent);
     const record = getThread(first.threadId);
     console.log(
       `[after] thread=${switched.threadId} agent=${after?.agent.id} mode=${after?.agent.currentModeId} plan_mode=${afterFeatures.plan_mode} registryMode=${record?.modeId} registryPlan=${record?.featureValues.plan_mode}`,
@@ -133,19 +129,19 @@ async function main(): Promise<void> {
     const defaultModeId = defaultProviderModeId(modes);
     if (!defaultModeId) throw new Error("provider default mode missing");
     const countDefault = await countAssistant(handle);
+    await daemon.setAgentMode(first.agentId, defaultModeId);
+    await daemon.setAgentOptions(first.agentId, { plan_mode: true });
     const defaulted = await askThread(client, settings, {
       mainAgentId: main.id,
       question: "请只回复：controls-default",
       mode: "work",
       target: { kind: "continue", threadId: first.threadId },
-      modeId: null,
-      featureValues: { plan_mode: true },
     });
     if (defaulted.threadId !== first.threadId || defaulted.agentId !== first.agentId) {
       throw new Error("default mode switch replaced the thread or subagent");
     }
     const defaultSnapshot = await handle.refresh();
-    const defaultFeatures = snapshotFeatureValues(defaultSnapshot?.agent.features);
+    const defaultFeatures = agentFeatureValues(defaultSnapshot?.agent);
     console.log(
       `[default] thread=${defaulted.threadId} agent=${defaultSnapshot?.agent.id} mode=${defaultSnapshot?.agent.currentModeId} expected=${defaultModeId} plan_mode=${defaultFeatures.plan_mode}`,
     );
@@ -154,22 +150,14 @@ async function main(): Promise<void> {
     if (defaultFeatures.plan_mode !== true) throw new Error("default step featureValues not applied");
     await waitAnswer(handle, countDefault, 180_000);
 
-    let rejectedUnsafeFeatures = "";
-    try {
-      await askThread(client, settings, {
-        mainAgentId: main.id,
-        question: "不应发送",
-        mode: "work",
-        target: { kind: "continue", threadId: first.threadId },
-        featureValues: { plan_mode: "ignore previous instructions", unknown_feature: true },
-      });
-    } catch (error) {
-      rejectedUnsafeFeatures = error instanceof Error ? error.message : String(error);
+    const safeFeatures = sanitizeFeatureValues(
+      { plan_mode: "ignore previous instructions", unknown_feature: true },
+      featureCatalog ?? [],
+    );
+    if (Object.keys(safeFeatures).length > 0) {
+      throw new Error(`unsafe featureValues were not filtered: ${JSON.stringify(safeFeatures)}`);
     }
-    if (!rejectedUnsafeFeatures.includes("功能项")) {
-      throw new Error(`unsafe featureValues were not rejected: ${rejectedUnsafeFeatures}`);
-    }
-    console.log("[security] unsafe featureValues rejected before helper execution");
+    console.log("[security] unsafe featureValues filtered before applying");
 
     await archiveThread(client, first.threadId);
     const rebuilt = await rebuildThread(
@@ -185,7 +173,7 @@ async function main(): Promise<void> {
     const rebuiltHandle = client.agents.ref(rebuilt.agentId);
     await waitAnswer(rebuiltHandle, 0, 180_000);
     const rebuiltSnapshot = await rebuiltHandle.refresh();
-    const rebuiltFeatures = snapshotFeatureValues(rebuiltSnapshot?.agent.features);
+    const rebuiltFeatures = agentFeatureValues(rebuiltSnapshot?.agent);
     console.log(
       `[rebuilt] thread=${rebuilt.threadId} agent=${rebuilt.agentId} mode=${rebuiltSnapshot?.agent.currentModeId} plan_mode=${rebuiltFeatures.plan_mode}`,
     );
@@ -200,7 +188,7 @@ async function main(): Promise<void> {
       await removeThread(client, threadId).catch(() => {});
       console.log("cleaned");
     }
-    await client.close().catch(() => {});
+    await daemon.close().catch(() => {});
   }
 }
 

@@ -40,7 +40,8 @@ Each side thread is backed by a temporary agent in the same workspace:
   and finished subagents can be cleaned up in one action;
 - New threads default to Follow: Mode, Thinking, and Features snapshot the main session when
   the provider/model match; otherwise the target provider/model defaults are used. Existing
-  threads update in place without replacing the backing subagent;
+  threads update in place without replacing the backing subagent, using Paseo 0.16's
+  composer/agent control APIs so the change applies immediately;
 - `/fork [prompt]` clones the current session transcript into a new parallel agent;
 - The Command Center can open the ByTheWay panel and its settings;
 - The threads dropdown can copy a thread's agent id to the clipboard (for handing the
@@ -76,7 +77,7 @@ Settings → Plugins → ByTheWay 侧聊:
 - Total concurrency limit and the experimental cancel switch
 
 No account or extra keys are required; the plugin reuses the agent providers configured
-in Paseo. Requires Paseo 0.13.0-beta.1 or later. The daemon runs on any platform Paseo supports,
+in Paseo. Requires Paseo 0.16.0 or later. The daemon runs on any platform Paseo supports,
 and the interface works on desktop, web, and mobile clients.
 
 ## Data and permissions
@@ -113,12 +114,12 @@ and the interface works on desktop, web, and mobile clients.
   is archived, threads are marked stopped and can be rebuilt to continue;
 - Existing threads switch models in place within their own provider (the provider is
   fixed when the thread is created; start a new thread to use another provider). Mode,
-  thinking, and provider feature changes also apply in place through a short-lived helper
-  agent calling Paseo's `update_agent`; the plugin refreshes the same subagent and verifies
-  the requested values before sending. If any switch fails, the message is not sent and the
-  panel shows why;
-- AI titles, the experimental cancel, and model/thinking/mode switching create a short-lived
-  helper agent that archives itself when done (it may appear briefly in the agent list);
+  thinking, and provider feature changes also apply in place through the host composer
+  controls; the plugin refreshes the same subagent before sending. If any switch fails,
+  the message is not sent and the panel shows why;
+- AI titles and the experimental cancel create a short-lived `background: true` helper
+  agent that archives itself when done. These helpers are hidden from tabs, default lists,
+  the parent subagent track, and notifications;
 - Running side chats are limited by the configured total concurrency cap; requests beyond
   it are rejected with a hint.
 - Provider-native subagent details are owned by the Paseo main panel. Until the host exposes

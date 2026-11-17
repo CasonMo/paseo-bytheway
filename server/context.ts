@@ -297,31 +297,3 @@ export async function detectToolsAvailable(paseo: PaseoApi): Promise<boolean> {
     return toolsCache?.value ?? true;
   }
 }
-
-type ModeChoice = { id: string; label: string; colorTier?: string };
-
-function isPlanMode(mode: { id: string; label: string }): boolean {
-  return /plan|read.?only|read-only/i.test(`${mode.id} ${mode.label}`);
-}
-
-/** 为只执行 Paseo 管理工具的临时辅助 agent 选择无人值守模式。 */
-export function chooseUnattendedMode(modes: readonly ModeChoice[]): string | undefined {
-  const dangerous = modes.find((mode) => mode.colorTier === "dangerous");
-  if (dangerous) return dangerous.id;
-  const bypass = modes.find((mode) => /bypass|full.?access|yolo/i.test(`${mode.id} ${mode.label}`));
-  if (bypass) return bypass.id;
-  const auto = modes.find((mode) => /auto/i.test(`${mode.id} ${mode.label}`));
-  if (auto) return auto.id;
-  const build = modes.find((mode) => /build|accept|edit|code|exec/i.test(`${mode.id} ${mode.label}`));
-  if (build) return build.id;
-  return modes.find((mode) => !isPlanMode(mode))?.id;
-}
-
-export async function pickUnattendedMode(paseo: PaseoApi, provider: string): Promise<string | undefined> {
-  try {
-    const result = await paseo.providers.listModes(provider);
-    return chooseUnattendedMode(result.modes ?? []);
-  } catch {
-    return undefined;
-  }
-}
