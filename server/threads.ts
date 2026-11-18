@@ -26,12 +26,89 @@ import * as registry from "./registry";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
 type AgentHandle = ReturnType<PaseoApi["agents"]["ref"]>;
+type AgentSnapshot = NonNullable<Awaited<ReturnType<AgentHandle["refresh"]>>>["agent"];
 type WorkspaceHandle = ReturnType<PaseoApi["workspaces"]["ref"]>;
 type CreateOptions = Parameters<WorkspaceHandle["agents"]["create"]>[0];
 type Attachment = NonNullable<CreateOptions["attachments"]>[number];
 type OutgoingTextAttachment = { type: "text"; mimeType: "text/plain"; title: string; text: string };
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 const TITLE_MAX = 60;
+const META_THREAD_ID = "bytheway.threadId";
+const META_MAIN_AGENT_ID = "bytheway.mainAgentId";
+const META_TITLE = "bytheway.title";
+const META_PINNED = "bytheway.pinned";
+const META_SYNC_CURSOR = "bytheway.syncCursor";
+const META_UPDATED_AT = "bytheway.updatedAt";
+
+function threadMetadata(record: ThreadRecord): Record<string, JsonValue> {
+  return {
+    [META_THREAD_ID]: record.id,
+    [META_MAIN_AGENT_ID]: record.mainAgentId,
+    [META_TITLE]: record.title,
+    [META_PINNED]: record.pinned,
+    [META_SYNC_CURSOR]: record.syncCursor as JsonValue,
+    [META_UPDATED_AT]: record.updatedAt,
+  };
+}
+
+function metadataString(agent: AgentSnapshot | null | undefined, key: string): string | null {
+  const value = agent?.metadata?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+function metadataBoolean(agent: AgentSnapshot | null | undefined, key: string): boolean | null {
+  const value = agent?.metadata?.[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function metadataNumber(agent: AgentSnapshot | null | undefined, key: string): number | null {
+  const value = agent?.metadata?.[key];
+  return typeof value === "number" ? value : null;
+}
+
+function metadataCursor(
+  agent: AgentSnapshot | null | undefined,
+): ThreadRecord["syncCursor"] {
+  const value = agent?.metadata?.[META_SYNC_CURSOR];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const unitsSeen = (value as { unitsSeen?: unknown }).unitsSeen;
+  const messagesSeen = (value as { messagesSeen?: unknown }).messagesSeen;
+  if (typeof unitsSeen !== "number" || typeof messagesSeen !== "number") return null;
+  return { unitsSeen, messagesSeen };
+}
+
+function mergeThreadMetadata(thread: ThreadRecord, agent: AgentSnapshot): ThreadRecord {
+  const metadataUpdatedAt = metadataNumber(agent, META_UPDATED_AT);
+  const metadataIsNewer = metadataUpdatedAt === null || metadataUpdatedAt >= thread.updatedAt;
+  const title = metadataIsNewer ? metadataString(agent, META_TITLE) : null;
+  const pinned = metadataIsNewer ? metadataBoolean(agent, META_PINNED) : null;
+  const mainAgentId = metadataString(agent, META_MAIN_AGENT_ID);
+  const syncCursor = metadataIsNewer
+    ? metadataCursor(agent) ?? thread.syncCursor
+    : thread.syncCursor;
+  const next: ThreadRecord = {
+    ...thread,
+    title: title ?? thread.title,
+    pinned: pinned ?? thread.pinned,
+    mainAgentId: mainAgentId ?? thread.mainAgentId,
+    syncCursor,
+  };
+  const changed =
+    next.title !== thread.title ||
+    next.pinned !== thread.pinned ||
+    next.mainAgentId !== thread.mainAgentId ||
+    next.syncCursor !== thread.syncCursor;
+  return changed ? next : thread;
+}
+
+async function writeThreadMetadata(paseo: PaseoApi, thread: ThreadRecord): Promise<void> {
+  try {
+    await paseo.agents.ref(thread.agentId).setMetadata(threadMetadata(thread));
+  } catch {
+    // metadata 是恢复用冗余；写失败不影响主流程
+  }
+}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -261,15 +338,19 @@ async function continueThread(
             }),
           ),
         );
-        registry.upsertThread({
+        const nextThread = {
           ...thread,
           syncCursor: { unitsSeen: tail.units.length, messagesSeen: tail.messagesSeen },
-        });
+        };
+        registry.upsertThread(nextThread);
+        void writeThreadMetadata(paseo, nextThread);
       } else {
         const increment = buildIncrementText(tail, thread.syncCursor, settings.includeActionDigest);
         if (increment) {
           attachments.push(textAttachment("主会话增量更新.md", increment.text));
-          registry.upsertThread({ ...thread, syncCursor: increment.cursor });
+          const nextThread = { ...thread, syncCursor: increment.cursor };
+          registry.upsertThread(nextThread);
+          void writeThreadMetadata(paseo, nextThread);
         }
       }
     } catch (error) {
@@ -301,7 +382,7 @@ async function continueThread(
   const promptMode = await promptModeForProviderMode(paseo, thread.provider, nextModeId);
   const nextThreadMode = promptMode === "provider" ? input.mode : promptMode;
 
-  registry.upsertThread({
+  const nextThread = {
     ...thread,
     mode: nextThreadMode,
     model: nextModel,
@@ -309,7 +390,9 @@ async function continueThread(
     thinkingOptionId: nextThinkingOptionId,
     featureValues: nextFeatureValues,
     updatedAt: Date.now(),
-  });
+  };
+  registry.upsertThread(nextThread);
+  void writeThreadMetadata(paseo, nextThread);
   console.log(
     `[bytheway] thread ${thread.id} ${nextThreadMode !== thread.mode ? `mode switched to ${nextThreadMode}` : "continued"} (${behavior})`,
   );
@@ -416,6 +499,7 @@ async function createThread(
     }
   }
 
+  const now = Date.now();
   const title = `[侧聊] ${truncateOneLine(input.question)}`;
   const handle = await paseo.workspaces.ref(input.workspaceId).agents.create({
     config: {
@@ -429,6 +513,14 @@ async function createThread(
     prompt,
     ...(attachments.length > 0 ? { attachments } : {}),
     labels: { sidekick: "1", "sidekick.thread": threadId, "sidekick.main": input.mainAgentId },
+    metadata: {
+      [META_THREAD_ID]: threadId,
+      [META_MAIN_AGENT_ID]: input.mainAgentId,
+      [META_TITLE]: title,
+      [META_PINNED]: false,
+      [META_SYNC_CURSOR]: syncCursor as JsonValue,
+      [META_UPDATED_AT]: now,
+    },
     ...(settings.attachToMain ? { parent: input.mainAgentId } : {}),
   });
 
@@ -439,7 +531,6 @@ async function createThread(
     : {};
   const recordFeatureValues =
     Object.keys(actualFeatures).length > 0 ? actualFeatures : input.featureValues;
-  const now = Date.now();
   const record: ThreadRecord = {
     id: threadId,
     mainAgentId: input.mainAgentId,
@@ -506,7 +597,9 @@ function maybeGenerateTitle(paseo: PaseoApi, settings: SidekickSettings, record:
         const title = raw.replace(/^[“”"'「」【\s]+|[“”"'「」【\s]+$/g, "").slice(0, 30);
         const current = registry.getThread(threadId);
         if (title && current && current.title === baseTitle) {
-          registry.upsertThread({ ...current, title });
+          const nextThread = { ...current, title };
+          registry.upsertThread(nextThread);
+          void writeThreadMetadata(paseo, nextThread);
           console.log(`[bytheway] thread ${threadId} title generated (${title.length} chars)`);
         }
       } finally {
@@ -543,21 +636,37 @@ export async function removeThread(paseo: PaseoApi, threadId: string): Promise<v
   } catch {
     // best effort
   }
+  try {
+    await paseo.agents.ref(thread.agentId).setMetadata({
+      [META_THREAD_ID]: null,
+      [META_MAIN_AGENT_ID]: null,
+      [META_TITLE]: null,
+      [META_PINNED]: null,
+      [META_SYNC_CURSOR]: null,
+      [META_UPDATED_AT]: null,
+    });
+  } catch {
+    // best effort
+  }
   registry.removeThread(threadId);
 }
 
-export async function renameThread(threadId: string, title: string): Promise<void> {
+export async function renameThread(paseo: PaseoApi, threadId: string, title: string): Promise<void> {
   await registry.ensureLoaded();
   const thread = registry.getThread(threadId);
   if (!thread) throw new Error("线程不存在");
-  registry.upsertThread({ ...thread, title: truncateOneLine(title, 120), updatedAt: Date.now() });
+  const nextThread = { ...thread, title: truncateOneLine(title, 120), updatedAt: Date.now() };
+  registry.upsertThread(nextThread);
+  await writeThreadMetadata(paseo, nextThread);
 }
 
-export async function pinThread(threadId: string, pinned: boolean): Promise<void> {
+export async function pinThread(paseo: PaseoApi, threadId: string, pinned: boolean): Promise<void> {
   await registry.ensureLoaded();
   const thread = registry.getThread(threadId);
   if (!thread) throw new Error("线程不存在");
-  registry.upsertThread({ ...thread, pinned, updatedAt: Date.now() });
+  const nextThread = { ...thread, pinned, updatedAt: Date.now() };
+  registry.upsertThread(nextThread);
+  await writeThreadMetadata(paseo, nextThread);
 }
 
 export async function rebuildThread(
@@ -650,6 +759,7 @@ export async function rebuildThread(
     }
   }
 
+  const now = Date.now();
   const handle = await paseo.workspaces.ref(thread.workspaceId).agents.create({
     config: {
       provider: model ? `${provider}/${model}` : provider,
@@ -662,6 +772,14 @@ export async function rebuildThread(
     prompt: seed,
     ...(attachments.length > 0 ? { attachments } : {}),
     labels: { sidekick: "1", "sidekick.thread": thread.id, "sidekick.main": thread.mainAgentId },
+    metadata: {
+      [META_THREAD_ID]: thread.id,
+      [META_MAIN_AGENT_ID]: thread.mainAgentId,
+      [META_TITLE]: thread.title,
+      [META_PINNED]: thread.pinned,
+      [META_SYNC_CURSOR]: null,
+      [META_UPDATED_AT]: now,
+    },
     ...(settings.attachToMain ? { parent: thread.mainAgentId } : {}),
   });
 
@@ -681,7 +799,7 @@ export async function rebuildThread(
     featureValues: Object.keys(actualFeatures).length > 0 ? actualFeatures : nextFeatureValues,
     state: "open",
     stateReason: null,
-    updatedAt: Date.now(),
+    updatedAt: now,
     syncCursor: null,
   };
   registry.upsertThread(record);
@@ -802,6 +920,7 @@ export async function previewContext(
 export async function reapOrphans(paseo: PaseoApi): Promise<void> {
   try {
     await registry.ensureLoaded();
+    await recoverThreadsFromAgents(paseo);
     const known = registry.knownThreadIds();
     const listing = await paseo.agents.list({
       filter: { labels: { sidekick: "1" }, includeArchived: false },
@@ -841,52 +960,115 @@ export async function reapOrphans(paseo: PaseoApi): Promise<void> {
   }
 }
 
-/** 列表前轻量刷状态：会话不存在/已归档 → stopped；同时收集各线程运行时状态。 */
+/** 从带 sidekick 标签和 metadata 的 agent 恢复丢失的线程注册表记录。 */
+export async function recoverThreadsFromAgents(paseo: PaseoApi): Promise<void> {
+  try {
+    await registry.ensureLoaded();
+    const listing = await paseo.agents.list({
+      filter: { labels: { sidekick: "1" }, includeArchived: true },
+      includeBackground: true,
+    });
+    const known = registry.knownThreadIds();
+    for (const entry of listing.entries) {
+      const agent = entry.agent;
+      if (agent.archivedAt) continue;
+      const metaThreadId = metadataString(agent, META_THREAD_ID);
+      if (!metaThreadId) continue;
+      const threadId = agent.labels?.["sidekick.thread"] ?? metaThreadId;
+      if (known.has(threadId)) continue;
+      const mainAgentId = metadataString(agent, META_MAIN_AGENT_ID);
+      if (!mainAgentId || !agent.workspaceId) continue;
+      const title =
+        metadataString(agent, META_TITLE) ?? agent.title ?? `[侧聊] ${agent.id}`;
+      const state = agent.archivedAt ? "stopped" : "open";
+      const record: ThreadRecord = {
+        id: threadId,
+        mainAgentId,
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        title,
+        mode: /plan|read.?only/i.test(`${agent.currentModeId ?? ""} ${title}`)
+          ? "ask"
+          : "work",
+        provider: agent.provider,
+        model: agent.model ?? "",
+        modeId: agent.currentModeId ?? null,
+        thinkingOptionId: agent.thinkingOptionId ?? null,
+        featureValues: agentFeatureValues(agent),
+        state,
+        stateReason: state === "stopped" ? "已归档" : null,
+        pinned: metadataBoolean(agent, META_PINNED) ?? false,
+        createdAt: Date.parse(String(agent.createdAt ?? "")) || Date.now(),
+        updatedAt: Date.parse(String(agent.updatedAt ?? "")) || Date.now(),
+        syncCursor: metadataCursor(agent),
+      };
+      registry.upsertThread(record);
+      console.log(`[bytheway] recovered thread ${threadId} from agent ${agent.id}`);
+    }
+  } catch (error) {
+    console.error("[bytheway] thread recovery failed", message(error));
+  }
+}
+
+/** 列表前批量刷状态：一次 agents.list 映射所有线程，避免 N+1 refresh。 */
 export async function refreshThreadStates(
   paseo: PaseoApi,
   mainAgentId: string,
 ): Promise<Record<string, ThreadRuntimeStatus>> {
   const statuses: Record<string, ThreadRuntimeStatus> = {};
   const threads = registry.listThreads(mainAgentId).slice(0, 12);
-  await Promise.allSettled(
-    threads.map(async (thread) => {
-      if (thread.state !== "open") {
-        statuses[thread.id] = "closed";
-        return;
-      }
-      try {
-        const snapshot = await paseo.agents.ref(thread.agentId).refresh();
-        const agent = snapshot?.agent;
-        if (!agent) {
-          registry.upsertThread({ ...thread, state: "stopped", stateReason: "会话不存在" });
-          statuses[thread.id] = "closed";
-        } else if (agent.archivedAt) {
-          registry.upsertThread({ ...thread, state: "stopped", stateReason: "已归档" });
-          statuses[thread.id] = "closed";
-        } else {
-          const actualModeId = agent.currentModeId ?? thread.modeId;
-          const actualThinkingOptionId = agent.thinkingOptionId ?? null;
-          const actualFeatures = agentFeatureValues(agent);
-          const modeDrifted = actualModeId !== thread.modeId;
-          const thinkingDrifted = actualThinkingOptionId !== thread.thinkingOptionId;
-          const featuresDrifted =
-            Object.keys(actualFeatures).length > 0 &&
-            !sameFeatureValues(actualFeatures, thread.featureValues);
-          if (modeDrifted || thinkingDrifted || featuresDrifted) {
-            registry.upsertThread({
-              ...thread,
-              modeId: actualModeId,
-              thinkingOptionId: actualThinkingOptionId,
-              featureValues: featuresDrifted ? actualFeatures : thread.featureValues,
-              updatedAt: Date.now(),
-            });
-          }
-          statuses[thread.id] = agent.status;
-        }
-      } catch {
-        statuses[thread.id] = "idle";
-      }
-    }),
-  );
+  if (threads.length === 0) return statuses;
+
+  let agentsById = new Map<string, AgentSnapshot>();
+  try {
+    const listing = await paseo.agents.list({
+      filter: { labels: { sidekick: "1" }, includeArchived: true },
+      includeBackground: true,
+    });
+    agentsById = new Map(listing.entries.map((entry) => [entry.agent.id, entry.agent]));
+  } catch {
+    for (const thread of threads) {
+      statuses[thread.id] = thread.state === "open" ? "idle" : "closed";
+    }
+    return statuses;
+  }
+
+  for (const thread of threads) {
+    if (thread.state !== "open") {
+      statuses[thread.id] = "closed";
+      continue;
+    }
+    const agent = agentsById.get(thread.agentId);
+    if (!agent) {
+      registry.upsertThread({ ...thread, state: "stopped", stateReason: "会话不存在" });
+      statuses[thread.id] = "closed";
+      continue;
+    }
+    if (agent.archivedAt) {
+      registry.upsertThread({ ...thread, state: "stopped", stateReason: "已归档" });
+      statuses[thread.id] = "closed";
+      continue;
+    }
+
+    const merged = mergeThreadMetadata(thread, agent);
+    const actualModeId = agent.currentModeId ?? merged.modeId;
+    const actualThinkingOptionId = agent.thinkingOptionId ?? null;
+    const actualFeatures = agentFeatureValues(agent);
+    const modeDrifted = actualModeId !== merged.modeId;
+    const thinkingDrifted = actualThinkingOptionId !== merged.thinkingOptionId;
+    const featuresDrifted =
+      Object.keys(actualFeatures).length > 0 &&
+      !sameFeatureValues(actualFeatures, merged.featureValues);
+    if (merged !== thread || modeDrifted || thinkingDrifted || featuresDrifted) {
+      registry.upsertThread({
+        ...merged,
+        modeId: actualModeId,
+        thinkingOptionId: actualThinkingOptionId,
+        featureValues: featuresDrifted ? actualFeatures : merged.featureValues,
+        updatedAt: Date.now(),
+      });
+    }
+    statuses[thread.id] = agent.status;
+  }
   return statuses;
 }

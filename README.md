@@ -6,12 +6,15 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 ## 功能
 
 - **实时执行流**：侧聊 agent 的流式文本、思考、工具调用、待办、turn 状态与用量实时直播（不轮询）。
+- **实时线程目录**：订阅 Paseo 的 agent_update 实时刷新线程状态；列表元数据每 60 秒兜底刷新，服务端一次 `agents.list` 批量映射，不再逐线程 refresh。
 - **线程化**：`/btw` 续聊、`/btw-new` 新开；新线程默认继承主会话原有 Mode/思考/Features；`/fork` 克隆当前会话。
 - **Subagent 管理**：当前侧聊 agent 派生的 Paseo 子 agent 与 provider 原生 subagent 统一显示在输入框上方；没有 subagent 时整块隐藏，有运行中的 subagent 时显示实时数量。点开可查看状态、打开详情、分离或归档 Paseo 子 agent，并可一键清理已完成的 subagent。
 - **上下文**：默认「agent 直连」——侧聊通过 Paseo 内置工具按需读取主会话最新进展；首轮附轻量快照；工具不可用时自动降级为被动增量同步。
 - **转录零落盘**：Paseo agent 转录是唯一数据源；插件只持久化线程注册表与模型配置记忆（`~/.paseo/plugin-data/paseo-bytheway/`），不复制问答正文。
 - **权限内联处理**：新线程继承主会话的 Mode、思考档与 provider features（如 opencode `auto_accept`），权限默认与主会话一致；面板内批准/拒绝；提问类请求渲染为分步表单（一次一题、单选自动前进、最后统一提交）；默认跟随主会话由 Paseo 原生处理，可选策略（询问+超时自动拒绝 / 自动放行只读 / 全部拒绝）。
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
+- **后台任务**：输入框上方显示侧聊 agent 的 background work，可一键停止；打断后的旧工具不会看起来永远卡在 running。
+- **入口可见**：workspace 侧栏行显示侧聊数量 badge；每个主 agent 的 composer 旁有「侧聊」入口。
 - **运行中**：按钮互斥——回答中只显示「停止」，空闲时只显示「发送」；回答中按 Enter 发送会打断当前回答、重新开始一轮（toast 提示）。
 - **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。切换直接走 Paseo 0.16 的 composer/agent 控制接口，毫秒级生效，不再等待辅助 agent。
 - **模型配置记忆**：默认开启。按 `provider/model` 记住用户实际使用过的 Mode、思考档和 Features；下次选到同一模型自动恢复，不同模型互不影响。可在设置中关闭。以「发送/重建成功后实际生效的值」为准，选择「跟随主会话」不会套用模型记忆。
@@ -61,4 +64,5 @@ Panel (client) ── RPC（创建/发送/归档/重建…）──▶ Daemon �
 - Subagent 列表由 Paseo 子 agent 快照与 `agent.provider_subagents.update` 事件合并而来；
 - 模型配置记忆保存在 `model-configs.json`（只含 Mode / 思考档 / Features 等控制项，不含对话内容），最多保留最近 50 个模型；
 - 已有线程的模型/思考/Mode/Features 切换由面板直接调用 Paseo composer 控制接口；AI 标题与实验性取消使用 `background: true` 的临时 helper，不会出现在默认列表、tab 或通知里；
+- 线程标题、置顶和被动同步游标写入 Paseo agent metadata；插件数据丢失时可从 agent 侧恢复。
 - 上下文模式：`linked`（默认，agent id 直连）/ `passive`（被动增量同步）/ 快照关闭。

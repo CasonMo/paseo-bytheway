@@ -1,5 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { threadsAsk } from "../shared/contracts";
+import { SidekickWorkspaceBadge } from "./entrypoints";
 import { messages } from "./messages";
 import { requestNewThread, requestThreadFocus } from "./panel-focus";
 import { SidekickPanel } from "./panel";
@@ -16,6 +17,65 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
   client = context;
 
   const cleanups: Array<() => void> = [];
+  const pills = new Map<string, { remove(): void }>();
+
+  const removePill = (agentId: string) => {
+    pills.get(agentId)?.remove();
+    pills.delete(agentId);
+  };
+
+  const ensurePill = (agent: {
+    id: string;
+    workspaceId?: string;
+    labels?: Record<string, string>;
+    background?: boolean;
+    archivedAt?: string | null;
+  }) => {
+    if (!agent.workspaceId || agent.background || agent.archivedAt || agent.labels?.sidekick) {
+      removePill(agent.id);
+      return;
+    }
+    if (pills.has(agent.id)) return;
+    try {
+      const registration = context.addComposerPill({
+        id: "bytheway",
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        button: {
+          title: messages.message("panelTitle"),
+          icon: "MessagesSquare",
+          label: messages.message("sideChatComposerAction"),
+          behavior: {
+            kind: "action",
+            onPress() {
+              context.openPanel("bytheway", {
+                location: "explorer",
+                workspaceId: agent.workspaceId!,
+                agentId: agent.id,
+              });
+            },
+          },
+        },
+      });
+      pills.set(agent.id, registration);
+    } catch {
+      // 某些宿主导入的 agent 可能还没有可挂载的 composer
+    }
+  };
+
+  void context.paseo.agents
+    .list({})
+    .then((listing) => listing.entries.forEach((entry) => ensurePill(entry.agent)))
+    .catch(() => {});
+
+  const unsubscribePills = context.paseo.agents.subscribe((update) => {
+    if (update.kind === "remove") {
+      removePill(update.agentId);
+      return;
+    }
+    ensurePill(update.agent);
+  });
+  cleanups.push(unsubscribePills);
 
   cleanups.push(
     context.addWorkspacePanel({
@@ -38,6 +98,15 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
       onSelect({ openPanel }) {
         openPanel("bytheway", { location: "explorer" });
       },
+    }),
+  );
+
+  cleanups.push(
+    context.addWorkspaceRowBadgeItem({
+      id: "bytheway",
+      title: messages.message("panelTitle"),
+      icon: "MessagesSquare",
+      Component: SidekickWorkspaceBadge,
     }),
   );
 
@@ -140,6 +209,7 @@ export function registerSidekickUi(context: PluginClientContext): () => void {
 
   return () => {
     for (const dispose of cleanups) dispose();
+    for (const agentId of [...pills.keys()]) removePill(agentId);
     client = null;
   };
 }

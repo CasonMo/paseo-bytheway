@@ -11,6 +11,7 @@ import {
   threadsRemove,
   threadsRename,
   threadsSendToMain,
+  threadsSummary,
   updateCheck,
 } from "./shared/contracts";
 import { sidekickSettings, type SidekickSettings } from "./shared/settings";
@@ -77,17 +78,6 @@ export default function contribute(server: PluginServerContext) {
     await ensureLoaded();
     reapOnce(paseo);
     const threadStatuses = await refreshThreadStates(paseo, input.mainAgentId);
-    try {
-      const running = await paseo.agents.list({
-        filter: { labels: { sidekick: "1" }, statuses: ["running"], includeArchived: false },
-      });
-      for (const entry of running.entries) {
-        const threadId = entry.agent.labels?.["sidekick.thread"];
-        if (typeof threadId === "string") threadStatuses[threadId] = "running";
-      }
-    } catch {
-      // 列表失败时不影响返回
-    }
     // 补齐未被逐线程刷新的条目
     for (const thread of listThreads(input.mainAgentId)) {
       if (!threadStatuses[thread.id]) {
@@ -98,6 +88,30 @@ export default function contribute(server: PluginServerContext) {
       threads: listThreads(input.mainAgentId).map(toThreadView),
       threadStatuses,
     };
+  });
+
+  server.handle(threadsSummary, async (_input, { paseo }) => {
+    const workspaces: Record<
+      string,
+      { total: number; running: number; attention: number }
+    > = {};
+    try {
+      const listing = await paseo.agents.list({
+        filter: { labels: { sidekick: "1" }, includeArchived: false },
+      });
+      for (const entry of listing.entries) {
+        const agent = entry.agent;
+        const workspaceId = agent.workspaceId;
+        if (!workspaceId) continue;
+        const bucket = (workspaces[workspaceId] ??= { total: 0, running: 0, attention: 0 });
+        bucket.total += 1;
+        if (agent.status === "running") bucket.running += 1;
+        if (agent.requiresAttention) bucket.attention += 1;
+      }
+    } catch {
+      // 摘要失败时返回空表，不影响侧栏
+    }
+    return { workspaces };
   });
 
   server.handle(modelConfigsList, async () => {
@@ -128,13 +142,13 @@ export default function contribute(server: PluginServerContext) {
     return { ok: true };
   });
 
-  server.handle(threadsRename, async (input) => {
-    await renameThread(input.threadId, input.title);
+  server.handle(threadsRename, async (input, { paseo }) => {
+    await renameThread(paseo, input.threadId, input.title);
     return { ok: true };
   });
 
-  server.handle(threadsPin, async (input) => {
-    await pinThread(input.threadId, input.pinned);
+  server.handle(threadsPin, async (input, { paseo }) => {
+    await pinThread(paseo, input.threadId, input.pinned);
     return { ok: true };
   });
 

@@ -15,10 +15,12 @@
 ## 使用
 
 - `/btw <问题>`：继续当前侧聊线程（没有则新开）；不带问题时只打开面板、不创建线程；`/btw-new [问题]`：新开一条，不带问题时打开面板并进入新线程草稿，可先切换 provider/model；
-- 命令创建或续聊线程后，面板会立即刷新并选中对应线程，不再等待 20 秒轮询；
+- 命令创建或续聊线程后，面板会立即刷新并选中对应线程，不再等待列表轮询；
 - 输入区动态显示 `模型 / 思考 / Mode / Features`：Mode 来自 `listModes`，功能项来自 `listFeatures`，思考档来自模型目录。没有对应能力的 provider 自动隐藏控件；
 - **模型配置记忆默认开启**：每次发送或重建成功后，按 `provider/model` 记住实际生效的 Mode、思考档和 Features；下次在模型选择器中选到同一模型时自动恢复。不同模型互不影响；选择「跟随主会话」不会套用模型记忆。可在设置中关闭；
 - 输入框上方的 **Subagent** 胶囊显示当前侧聊线程的子线程数量与运行状态：点开可打开详情；Paseo 子 agent 可分离或归档，已完成的 subagent 可一键清理；
+- 线程目录订阅 Paseo agent 更新实时刷新，列表元数据每 60 秒兜底；服务端批量读取 agent，避免逐线程 refresh；
+- 输入框上方显示侧聊 agent 的 **后台任务**，可一键停止；workspace 侧栏行显示侧聊数量 badge，每个主 agent 的 composer 旁有「侧聊」入口；
 - 新线程默认跟随主会话的 mode、thinking 和 feature 值；模型/provider 不一致时使用目标 provider/model 默认值；
 - 已有线程切换模型、Mode、思考档或功能项会通过 Paseo 0.16 的 composer/agent 控制接口原地更新对应 subagent，毫秒级生效，不更换 agent；
 - `/fork [提示词]`：把当前会话转录克隆为一个新的并行会话；
@@ -58,6 +60,7 @@ Paseo 设置 → 插件 → ByTheWay 侧聊：
 ## 已知限制
 
 - 线程绑定创建它的 daemon 与主会话；主会话被归档后线程标记为已停止，可「重建并继续」；
+- 线程标题、置顶和被动同步游标写入 agent metadata；插件数据丢失时会从 agent 侧恢复；旧版本没有 metadata 的历史线程仍以注册表为准；
 - 已有线程在同一 Provider 内原地切换模型（Provider 在创建线程时固定，需要其它 Provider 请新开线程）；Mode、思考档和 features 切换同样原地生效，直接调用 Paseo 0.16 的 composer/agent 控制接口，并刷新同一个 subagent 的快照确认实际值；任何切换失败时消息不会发出，面板会显示原因；
 - AI 标题生成与实验性取消会短暂创建一个 `background: true` 的辅助 agent（用后即自动归档，不会出现在默认列表、tab、父 subagent track 或通知中）；
 - 同一时刻运行中的侧聊受并发上限约束；运行中的线程过多时新请求会被拒绝并提示。

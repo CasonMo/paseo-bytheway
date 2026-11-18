@@ -123,6 +123,9 @@
   "toolCompleted": "Done",
   "toolFailed": "Failed",
   "toolCanceled": "Canceled",
+  "backgroundTasks": "Background tasks {{count}}",
+  "sideChatComposerAction": "Side chat",
+  "sideChatBadge": "Side chats {{count}}",
   "compactionLoading": "Compacting context…",
   "compactionDone": "Context compacted",
   "reg": {

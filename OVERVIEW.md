@@ -12,6 +12,10 @@ Each side thread is backed by a temporary agent in the same workspace:
   question to a side agent;
 - The panel subscribes directly to the side agent's timeline and streams text, thinking,
   tool calls, todos, permission requests, and per-turn usage live;
+- The thread directory follows Paseo agent updates live, with a 60-second metadata fallback;
+  the daemon reads agents in one batch instead of refreshing each thread separately;
+- The composer shows the active side agent's background work with a stop action; workspace
+  rows show a side-chat badge and every main agent's composer gets a side-chat entry;
 - Paseo child agents and provider-native subagents spawned by the active side agent are
   merged into a Subagent pill above the composer; the pill is hidden when there are none;
 - By default the side agent is linked to the main session: it reads the latest progress
@@ -112,6 +116,9 @@ and the interface works on desktop, web, and mobile clients.
 
 - Threads are bound to the daemon and main session that created them. If the main session
   is archived, threads are marked stopped and can be rebuilt to continue;
+- Thread title, pin state, and passive-sync cursor live in agent metadata as well as the
+  local registry, so a lost plugin data directory can recover them from the agent. Threads
+  created before metadata support still rely on the registry;
 - Existing threads switch models in place within their own provider (the provider is
   fixed when the thread is created; start a new thread to use another provider). Mode,
   thinking, and provider feature changes also apply in place through the host composer

@@ -123,6 +123,9 @@
   "toolCompleted": "完成",
   "toolFailed": "失败",
   "toolCanceled": "取消",
+  "backgroundTasks": "后台任务 {{count}}",
+  "sideChatComposerAction": "侧聊",
+  "sideChatBadge": "侧聊 {{count}}",
   "compactionLoading": "上下文压缩中…",
   "compactionDone": "上下文已压缩",
   "reg": {

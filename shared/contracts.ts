@@ -73,6 +73,21 @@ export const threadsList = defineRpc({
   }),
 });
 
+export const threadsSummary = defineRpc({
+  name: "bytheway.threads.summary",
+  input: z.object({}),
+  output: z.object({
+    workspaces: z.record(
+      z.string(),
+      z.object({
+        total: z.number().int().nonnegative(),
+        running: z.number().int().nonnegative(),
+        attention: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+});
+
 export const modelConfigsList = defineRpc({
   name: "bytheway.model-configs.list",
   input: z.object({}),

@@ -85,6 +85,16 @@ interface ModelOption {
   defaultThinkingOptionId?: string;
 }
 
+interface BackgroundWorkItem {
+  id: string;
+  kind: string;
+  description: string | null;
+  command?: string;
+  startedAt: string;
+  canStop?: boolean;
+  stopToken?: string;
+}
+
 const NO_THINKING_OPTIONS: ThinkingOption[] = [];
 
 export function SidekickPanel({ theme, layout, host, agentId, navigation }: PluginAgentPanelProps) {
@@ -182,6 +192,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   /* ---------------- 线程数据 ---------------- */
 
   const [threads, setThreads] = useState<ThreadView[]>([]);
+  const threadsRef = useRef<ThreadView[]>([]);
   const [threadStatuses, setThreadStatuses] = useState<Record<string, ThreadRuntimeStatus>>({});
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const newThreadIntentRef = useRef(0);
@@ -211,9 +222,64 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), 20_000);
+    const timer = setInterval(() => void refresh(), 60_000);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  // agent_update 实时更新线程状态；线程列表元数据每 60 秒兜底刷新。
+  useEffect(() => {
+    const unsubscribe = paseo.agents.subscribe((update) => {
+      if (update.kind === "remove") {
+        const thread = threadsRef.current.find((entry) => entry.agentId === update.agentId);
+        if (thread) {
+          setThreadStatuses((current) =>
+            current[thread.id] === "closed" ? current : { ...current, [thread.id]: "closed" },
+          );
+        }
+        return;
+      }
+      const agent = update.agent;
+      if (agent.labels?.sidekick !== "1" || agent.labels["sidekick.main"] !== agentId) return;
+      const threadId = agent.labels["sidekick.thread"];
+      if (!threadId) return;
+      if (!threadsRef.current.some((thread) => thread.id === threadId)) {
+        void refresh();
+        return;
+      }
+      const status = agent.archivedAt ? "closed" : agent.status;
+      setThreadStatuses((current) =>
+        current[threadId] === status ? current : { ...current, [threadId]: status },
+      );
+      setThreads((current) =>
+        current.map((thread) => {
+          if (thread.id !== threadId) return thread;
+          const metadata = agent.metadata ?? {};
+          return {
+            ...thread,
+            title:
+              typeof metadata["bytheway.title"] === "string"
+                ? metadata["bytheway.title"]
+                : thread.title,
+            pinned:
+              typeof metadata["bytheway.pinned"] === "boolean"
+                ? metadata["bytheway.pinned"]
+                : thread.pinned,
+            model: agent.model ?? thread.model,
+            modeId: agent.currentModeId ?? thread.modeId,
+            thinkingOptionId: agent.thinkingOptionId ?? null,
+            featureValues: agentFeatureValues(agent),
+            state: agent.archivedAt ? "stopped" : thread.state,
+            updatedAt: Date.now(),
+          };
+        }),
+      );
+    });
+    return unsubscribe;
+  }, [paseo, agentId, refresh]);
 
   // 命令创建/继续的线程：立即刷新列表并选中，不等 20s 轮询。
   // 覆盖两种场景：面板挂载时消费暂存请求；面板已打开时接收实时信号。
@@ -437,6 +503,28 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [stopping, setStopping] = useState(false);
   const [stopHint, setStopHint] = useState<string | null>(null);
   const [responding, setResponding] = useState(false);
+  const [backgroundWork, setBackgroundWork] = useState<BackgroundWorkItem[]>([]);
+  const [stoppingBackground, setStoppingBackground] = useState(false);
+
+  useEffect(() => {
+    if (!selected?.agentId) {
+      setBackgroundWork([]);
+      return;
+    }
+    let active = true;
+    const unsubscribe = paseo.agents.ref(selected.agentId).backgroundWork.subscribe(
+      (items) => {
+        if (active) setBackgroundWork(items);
+      },
+      { onError: () => {
+        if (active) setBackgroundWork([]);
+      } },
+    );
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [paseo, selected?.agentId]);
 
   useEffect(() => {
     setModelOverride(null);
@@ -936,6 +1024,23 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
       setStopping(false);
     }
   }, [selected, stopping, cancelRpc, paseo, toast, stream, t, experimentalCancel]);
+
+  const stopBackgroundWork = useCallback(async () => {
+    if (!selected || stoppingBackground) return;
+    const stoppable = backgroundWork.filter((item) => item.canStop !== false);
+    if (stoppable.length === 0) return;
+    setStoppingBackground(true);
+    try {
+      await Promise.allSettled(
+        stoppable.map((item) => paseo.agents.ref(selected.agentId).backgroundWork.stop(item)),
+      );
+      toast.show(t.stoppedToast, { variant: "success" });
+    } catch (error) {
+      toast.show(t.subagentsActionFailed(messageOf(error)), { variant: "error" });
+    } finally {
+      setStoppingBackground(false);
+    }
+  }, [selected, stoppingBackground, backgroundWork, paseo, toast, t]);
 
   const archiveSelected = useCallback(
     async (threadId: string) => {
@@ -1513,6 +1618,37 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
       {/* Composer */}
       <View style={styles.composer}>
+        {backgroundWork.length > 0 ? (
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              paddingHorizontal: 2,
+            }}
+          >
+            <Icon name="Activity" size={11} color={theme.colors.statusWarning} />
+            <Text numberOfLines={1} style={[styles.muted, { flex: 1 }]}>
+              {`${t.backgroundTasks(backgroundWork.length)} · ${
+                backgroundWork[0].description ??
+                backgroundWork[0].command ??
+                backgroundWork[0].kind
+              }`}
+            </Text>
+            {backgroundWork.some((item) => item.canStop !== false) ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={stoppingBackground}
+                onPress={() => void stopBackgroundWork()}
+                hitSlop={8}
+              >
+                <Text style={{ color: theme.colors.statusWarning, fontSize: 11 }}>
+                  {stoppingBackground ? t.stopping : t.stop}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         {selected ? (
           <SubagentPill
             agentId={selected.agentId}

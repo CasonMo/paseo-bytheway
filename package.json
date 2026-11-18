@@ -1,6 +1,6 @@
 {
   "name": "paseo-bytheway",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
@@ -25,7 +25,8 @@
     "cross-provider-check": "tsx scripts/cross-provider-check.ts",
     "model-switch-check": "tsx scripts/model-switch-check.ts",
     "thinking-switch-check": "tsx scripts/thinking-switch-check.ts",
-    "provider-controls-check": "tsx scripts/provider-controls-check.ts"
+    "provider-controls-check": "tsx scripts/provider-controls-check.ts",
+    "metadata-check": "tsx scripts/metadata-check.ts"
   },
   "devDependencies": {
     "@getpaseo/client": "^0.16.1",

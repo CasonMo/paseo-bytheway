@@ -141,6 +141,9 @@ export interface UIStrings {
   toolCompleted: string;
   toolFailed: string;
   toolCanceled: string;
+  backgroundTasks: (count: number) => string;
+  sideChatComposerAction: string;
+  sideChatBadge: (count: number) => string;
   compactionLoading: string;
   compactionDone: string;
 
@@ -289,6 +292,9 @@ export function useT(): UIStrings {
       toolCompleted: t("toolCompleted"),
       toolFailed: t("toolFailed"),
       toolCanceled: t("toolCanceled"),
+      backgroundTasks: (count: number) => t("backgroundTasks", { count }),
+      sideChatComposerAction: t("sideChatComposerAction"),
+      sideChatBadge: (count: number) => t("sideChatBadge", { count }),
       compactionLoading: t("compactionLoading"),
       compactionDone: t("compactionDone"),
 
