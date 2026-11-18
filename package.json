@@ -1,13 +1,15 @@
 {
   "name": "paseo-bytheway",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
     "OVERVIEW.zh-CN.md",
     "README.md",
     "assets/icon.png",
+    "assets/screenshot.png",
     "assets/screenshot-commands.png",
+    "assets/screenshot-settings.png",
     "LICENSE",
     "index.client.tsx",
     "index.server.ts",

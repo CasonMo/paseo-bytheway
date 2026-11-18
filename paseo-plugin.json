@@ -6,7 +6,9 @@
     "paseo": ">=0.16.0"
   },
   "media": [
-    "assets/screenshot-commands.png"
+    "assets/screenshot.png",
+    "assets/screenshot-commands.png",
+    "assets/screenshot-settings.png"
   ],
   "icon": "assets/icon.png"
 }
