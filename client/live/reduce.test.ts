@@ -224,3 +224,38 @@ describe("liveReducer（增量追加语义，对齐官方运行时）", () => {
     expect(state.items[0]).toMatchObject({ kind: "user", text: "q" });
   });
 });
+
+describe("user_message 附件回显关联键", () => {
+  it("用户条目保留 clientMessageId", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: { type: "user_message", text: "看图", clientMessageId: "cm_1" },
+    });
+    expect(state.items[0]).toMatchObject({ kind: "user", text: "看图", messageId: "cm_1" });
+  });
+
+  it("初始 user_message 去重时把 messageId 补到顶部 prompt 气泡", () => {
+    let state = initialLiveState();
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: {
+        type: "tool_call",
+        callId: "am1",
+        name: "agent_message",
+        status: "running",
+        detail: { type: "plain_text", text: "最初的问题" },
+      },
+    });
+    state = stream(state, {
+      type: "timeline",
+      provider: "p",
+      item: { type: "user_message", text: "最初的问题", clientMessageId: "cm_2" },
+    });
+    const users = state.items.filter((item) => item.kind === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ messageId: "cm_2" });
+  });
+});

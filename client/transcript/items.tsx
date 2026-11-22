@@ -1,8 +1,10 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Image, Text, View } from "react-native";
 import { copyText, Icon, Markdown, TextInput, useToast } from "../host-ui";
 import { useT, type UIStrings } from "../i18n";
+import { useMessageAttachments } from "../use-message-attachments";
+import { requestImagePreview } from "../image-preview";
 import type {
   AssistantItem,
   CompactionItem,
@@ -339,11 +341,14 @@ export const UserItemView = memo(function UserItemView({
   item,
   theme,
   compact,
+  threadId,
 }: {
   item: UserItem;
   theme: PluginTheme;
   compact: boolean;
+  threadId: string | null;
 }) {
+  const attachments = useMessageAttachments(threadId, item.messageId);
   return (
     <View style={{ alignSelf: "flex-end", maxWidth: "86%" }}>
       <View
@@ -354,9 +359,66 @@ export const UserItemView = memo(function UserItemView({
           paddingVertical: 7,
         }}
       >
-        <Text selectable style={{ color: theme.colors.foreground, fontSize: compact ? 12 : 13, lineHeight: compact ? 18 : 20 }}>
-          {item.text}
-        </Text>
+        {attachments.length > 0 ? (
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              gap: 6,
+              marginBottom: item.text ? 6 : 0,
+            }}
+          >
+            {attachments.map((attachment, index) =>
+              attachment.kind === "image" && attachment.data ? (
+                <Pressable
+                  key={index}
+                  accessibilityRole="button"
+                  accessibilityLabel={attachment.fileName}
+                  onPress={() =>
+                    requestImagePreview({
+                      uri: `data:${attachment.mimeType};base64,${attachment.data}`,
+                      title: attachment.fileName,
+                    })
+                  }
+                >
+                  <Image
+                    source={{ uri: `data:${attachment.mimeType};base64,${attachment.data}` }}
+                    style={{ width: 48, height: 48, borderRadius: 6 }}
+                    resizeMode="cover"
+                  />
+                </Pressable>
+              ) : (
+                <View
+                  key={index}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    borderWidth: 1,
+                    borderColor: theme.colors.border,
+                    borderRadius: 6,
+                    paddingHorizontal: 6,
+                    paddingVertical: 3,
+                  }}
+                >
+                  <Icon name="File" size={12} color={theme.colors.foregroundMuted} />
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={{ color: theme.colors.foregroundMuted, fontSize: 11, maxWidth: 140 }}
+                  >
+                    {attachment.fileName}
+                  </Text>
+                </View>
+              ),
+            )}
+          </View>
+        ) : null}
+        {item.text ? (
+          <Text selectable style={{ color: theme.colors.foreground, fontSize: compact ? 12 : 13, lineHeight: compact ? 18 : 20 }}>
+            {item.text}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
@@ -844,10 +906,12 @@ export function LiveItemView({
   item,
   theme,
   compact,
+  threadId = null,
 }: {
   item: LiveItem;
   theme: PluginTheme;
   compact: boolean;
+  threadId?: string | null;
 }) {
   switch (item.kind) {
     case "assistant":
@@ -859,7 +923,7 @@ export function LiveItemView({
     case "todo":
       return <TodoItemView item={item} theme={theme} compact={compact} />;
     case "user":
-      return <UserItemView item={item} theme={theme} compact={compact} />;
+      return <UserItemView item={item} theme={theme} compact={compact} threadId={threadId} />;
     case "notice":
       return <NoticeItemView item={item} theme={theme} compact={compact} />;
     case "error":

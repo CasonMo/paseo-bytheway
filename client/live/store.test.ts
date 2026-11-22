@@ -34,12 +34,22 @@ describe("convertEntries initial prompt", () => {
         status: "completed",
         detail: { type: "plain_text", text: "同一个问题" },
       }),
-      entry(2, { type: "user_message", text: "同一个问题" }),
+      entry(2, { type: "user_message", text: "同一个问题", clientMessageId: "cm_9" }),
     ]);
 
     expect(items.filter((item) => item.kind === "user" && item.text === "同一个问题")).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "user", text: "同一个问题" });
+    expect(items[0]).toMatchObject({ kind: "user", text: "同一个问题", messageId: "cm_9" });
     expect(items[1]).toMatchObject({ kind: "tool", name: "agent_message" });
+  });
+
+  it("carries clientMessageId on regular user messages for attachment echo", () => {
+    const items = convertEntries([
+      entry(1, { type: "user_message", text: "看图", clientMessageId: "cm_1" }),
+      entry(2, { type: "user_message", text: "无键消息" }),
+    ]);
+    expect(items[0]).toMatchObject({ kind: "user", messageId: "cm_1" });
+    expect(items[1]).toMatchObject({ kind: "user", text: "无键消息" });
+    expect(items[1]).not.toHaveProperty("messageId");
   });
 
   it("keeps a later repeated question instead of treating it as the initial prompt", () => {

@@ -41,7 +41,7 @@ export interface RawTodoEntry {
 }
 
 export type RawItem =
-  | { type: "user_message"; text: string; messageId?: string }
+  | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
   | { type: "reasoning"; text: string }
   | {
@@ -99,6 +99,8 @@ export interface UserItem {
   kind: "user";
   key: string;
   text: string;
+  /** daemon timeline 的 clientMessageId，用于回显该消息的落盘附件。 */
+  messageId?: string;
 }
 
 export interface ToolItem {

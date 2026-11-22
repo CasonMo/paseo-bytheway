@@ -1,7 +1,7 @@
 import type { PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { useAgent, useComposers, usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import { Image, Platform, Pressable, Text, View } from "react-native";
 import {
   threadsArchive,
   threadsAsk,
@@ -34,7 +34,23 @@ import {
   type ProviderModeLike,
 } from "../shared/controls";
 import { copyText, FlatList, Icon, openExternalUrl, ScrollView, TextInput, useToast } from "./host-ui";
+import {
+  AttachmentError,
+  attachmentsSupported,
+  checkAttachmentLimits,
+  clipboardFiles,
+  fileToUserAttachment,
+  pickFilesFromDialog,
+  type AttachmentErrorCode,
+} from "./attachments";
+import {
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TOTAL_ATTACHMENT_BYTES,
+  type UserAttachment,
+} from "../shared/attachments";
 import { OverlaySheet } from "./overlay";
+import { onImagePreviewRequest, type ImagePreviewRequest } from "./image-preview";
 import { localizeServerMessage, useLocale, useT } from "./i18n";
 import {
   onNewThreadRequest,
@@ -93,6 +109,12 @@ interface BackgroundWorkItem {
   startedAt: string;
   canStop?: boolean;
   stopToken?: string;
+}
+
+interface PendingAttachment extends UserAttachment {
+  id: string;
+  size: number;
+  previewUrl: string | null;
 }
 
 const NO_THINKING_OPTIONS: ThinkingOption[] = [];
@@ -197,6 +219,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [selectedId, setSelectedId] = useState<string | null | undefined>(undefined);
   const newThreadIntentRef = useRef(0);
   const [threadModalOpen, setThreadModalOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<ImagePreviewRequest | null>(null);
+  useEffect(() => onImagePreviewRequest(setPreviewImage), []);
   const [threadQuery, setThreadQuery] = useState("");
   const [renameTarget, setRenameTarget] = useState<ThreadView | null>(null);
   const [renameText, setRenameText] = useState("");
@@ -505,6 +529,104 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const [responding, setResponding] = useState(false);
   const [backgroundWork, setBackgroundWork] = useState<BackgroundWorkItem[]>([]);
   const [stoppingBackground, setStoppingBackground] = useState(false);
+
+  /* ---------------- 附件（仅 web） ---------------- */
+
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments;
+  }, [pendingAttachments]);
+  useEffect(
+    () => () => {
+      for (const item of pendingAttachmentsRef.current) {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      }
+    },
+    [],
+  );
+
+  const attachmentErrorText = useCallback(
+    (code: AttachmentErrorCode): string => {
+      switch (code) {
+        case "tooLarge":
+          return t.attachmentTooLarge(MAX_ATTACHMENT_BYTES / 1024 / 1024);
+        case "empty":
+          return t.attachmentEmpty;
+        case "tooMany":
+          return t.tooManyAttachments(MAX_ATTACHMENT_COUNT);
+        case "totalTooLarge":
+          return t.attachmentsTotalTooLarge(MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024);
+        default:
+          return t.attachmentReadFailed;
+      }
+    },
+    [t],
+  );
+
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      const read: PendingAttachment[] = [];
+      for (const file of files) {
+        try {
+          const attachment = await fileToUserAttachment(file);
+          read.push({
+            ...attachment,
+            id: newRequestId(),
+            size: file.size,
+            previewUrl: attachment.kind === "image" ? URL.createObjectURL(file) : null,
+          });
+        } catch (error) {
+          toast.error(
+            attachmentErrorText(error instanceof AttachmentError ? error.code : "readFailed"),
+          );
+        }
+      }
+      if (read.length === 0) return;
+      const limitError = checkAttachmentLimits(pendingAttachments, read);
+      if (limitError) {
+        for (const item of read) {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
+        toast.error(attachmentErrorText(limitError));
+        return;
+      }
+      setPendingAttachments([...pendingAttachments, ...read]);
+    },
+    [pendingAttachments, attachmentErrorText, toast],
+  );
+
+  const removePendingAttachment = useCallback(
+    (id: string) => {
+      const target = pendingAttachments.find((item) => item.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      setPendingAttachments(pendingAttachments.filter((item) => item.id !== id));
+    },
+    [pendingAttachments],
+  );
+
+  const attachFiles = useCallback(() => {
+    void (async () => {
+      await addFiles(await pickFilesFromDialog());
+    })();
+  }, [addFiles]);
+
+  // 剪贴板粘贴图片/文件：有文件时拦截默认粘贴，纯文本不干预。
+  useEffect(() => {
+    if (!attachmentsSupported()) return;
+    const node = inputRef.current as unknown as HTMLElement | null;
+    if (!node?.addEventListener) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const files = clipboardFiles(event.clipboardData);
+      if (files.length === 0) return;
+      event.preventDefault();
+      void addFiles(files);
+    };
+    node.addEventListener("paste", onPaste);
+    return () => node.removeEventListener("paste", onPaste);
+  }, [addFiles]);
 
   useEffect(() => {
     if (!selected?.agentId) {
@@ -902,7 +1024,13 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
 
   const send = useCallback(async () => {
     const question = input.trim();
-    if (!question || sending) return;
+    if ((!question && pendingAttachments.length === 0) || sending) return;
+    const attachments = pendingAttachments.map(({ kind, fileName, mimeType, data }) => ({
+      kind,
+      fileName,
+      mimeType,
+      data,
+    }));
     setSending(true);
     setSendError(null);
     try {
@@ -912,6 +1040,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           ? await rebuildRpc({
               threadId: selected.id,
               question,
+              ...(attachments.length > 0 ? { attachments } : {}),
               ...(willContinue
                 ? {}
                 : {
@@ -924,6 +1053,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           : await askRpc({
               mainAgentId: agentId,
               question,
+              ...(attachments.length > 0 ? { attachments } : {}),
               mode: requestThreadMode,
               target: willContinue && selected ? { kind: "continue", threadId: selected.id } : { kind: "new" },
               ...(willContinue
@@ -939,6 +1069,10 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               clientRequestId: newRequestId(),
             });
       setInput("");
+      for (const item of pendingAttachments) {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      }
+      setPendingAttachments([]);
       followRef.current = true;
       setShowJump(false);
       await refresh();
@@ -954,6 +1088,7 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
     }
   }, [
     input,
+    pendingAttachments,
     sending,
     applyThreadConfig,
     askRpc,
@@ -1169,6 +1304,34 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         flexWrap: "wrap" as const,
         alignItems: "center" as const,
         gap: 6,
+      },
+      attachmentRow: {
+        flexDirection: "row" as const,
+        flexWrap: "wrap" as const,
+        gap: 6,
+      },
+      attachmentChip: {
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 6,
+        borderRadius: 7,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        backgroundColor: theme.colors.surface1,
+        paddingHorizontal: 6,
+        paddingVertical: 4,
+        maxWidth: 240,
+      },
+      attachmentThumb: {
+        width: 28,
+        height: 28,
+        borderRadius: 4,
+      },
+      attachmentName: {
+        color: theme.colors.foregroundMuted,
+        fontSize: 11,
+        flexShrink: 1,
+        minWidth: 0,
       },
       modelChip: {
         flexShrink: 1,
@@ -1557,7 +1720,9 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               contentContainerStyle={styles.transcriptContent}
               data={items}
               keyExtractor={(item) => item.key}
-              renderItem={({ item }) => <LiveItemView item={item} theme={theme} compact={compact} />}
+              renderItem={({ item }) => (
+                <LiveItemView item={item} theme={theme} compact={compact} threadId={selected?.id ?? null} />
+              )}
               onLayout={(event) => {
                 viewportHeightRef.current = event.nativeEvent.layout.height;
                 if (followRef.current) scrollToBottom(false);
@@ -1663,7 +1828,32 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
             onArchiveFinished={subagents.archiveFinished}
           />
         ) : null}
+        {pendingAttachments.length > 0 ? (
+          <View style={styles.attachmentRow}>
+            {pendingAttachments.map((item) => (
+              <View key={item.id} style={styles.attachmentChip}>
+                {item.previewUrl ? (
+                  <Image source={{ uri: item.previewUrl }} style={styles.attachmentThumb} />
+                ) : (
+                  <Icon name="File" size={14} color={theme.colors.foregroundMuted} />
+                )}
+                <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
+                  {item.fileName}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t.removeAttachment}
+                  onPress={() => removePendingAttachment(item.id)}
+                  hitSlop={6}
+                >
+                  <Icon name="X" size={12} color={theme.colors.foregroundMuted} />
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : null}
         <TextInput
+          ref={inputRef}
           multiline
           style={styles.input}
           placeholder={selected && selected.state === "open" ? t.inputPlaceholderContinue : t.inputPlaceholderNew}
@@ -1673,6 +1863,16 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           onKeyPress={Platform.OS === "web" ? onComposerKeyPress : undefined}
         />
         <View style={styles.composerRow}>
+          {attachmentsSupported() ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t.attach}
+              style={[styles.chip, styles.composerAction]}
+              onPress={attachFiles}
+            >
+              <Icon name="Paperclip" size={12} color={theme.colors.foregroundMuted} />
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             style={[styles.chip, styles.modelChip]}
@@ -1784,10 +1984,12 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
               style={[
                 styles.primaryButton,
                 styles.composerAction,
-                (!input.trim() || sending || selected?.state === "stopped") && { opacity: 0.5 },
+                ((!input.trim() && pendingAttachments.length === 0) ||
+                  sending ||
+                  selected?.state === "stopped") && { opacity: 0.5 },
               ]}
               onPress={() => void send()}
-              disabled={!input.trim() || sending}
+              disabled={(!input.trim() && pendingAttachments.length === 0) || sending}
             >
               <Text style={{ color: theme.colors.accentForeground, fontSize: 12, fontWeight: "600" }}>
                 {sending ? t.sending : t.send}
@@ -1832,6 +2034,22 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           ) : null}
         </View>
       </View>
+
+      {/* 附件图片预览浮层 */}
+      <OverlaySheet
+        open={previewImage !== null}
+        onClose={() => setPreviewImage(null)}
+        title={previewImage?.title ?? ""}
+        theme={theme}
+      >
+        {previewImage ? (
+          <Image
+            source={{ uri: previewImage.uri }}
+            style={{ width: "100%", height: 340 }}
+            resizeMode="contain"
+          />
+        ) : null}
+      </OverlaySheet>
 
       {/* 线程选择弹层 */}
       <OverlaySheet open={threadModalOpen} onClose={() => setThreadModalOpen(false)} title={t.threadsSheet} theme={theme}>

@@ -57,6 +57,15 @@ Each side thread is backed by a temporary agent in the same workspace:
   requests") — it opens in your system browser and only when you click it;
 - On desktop the panel composer sends with Enter and inserts a newline with Shift+Enter
   (same as the main Paseo composer);
+- **Attachments**: the paperclip button picks images or files, and on desktop you can also
+  paste images/files straight from the clipboard. Images travel through Paseo's native image
+  channel to the model; other files are stored under the plugin data directory and referenced
+  by path, so the side agent reads them with its own file tools (same as the main Paseo
+  composer). Up to 8 attachments per message, 10 MB per file, 20 MB total; a message can be
+  attachments-only. Sent attachments are echoed inside the user message bubble (image
+  thumbnails, file name chips) from the local upload copy; tapping a thumbnail opens an
+  in-panel full-size preview. Picking/pasting attachments is
+  desktop (web) only for now;
 - While a side chat is answering, the composer shows only Stop (when idle it shows only
   Send); pressing Enter still interrupts the current answer and starts a fresh turn with
   the new message (a toast confirms);
@@ -81,7 +90,7 @@ Settings → Plugins → ByTheWay 侧聊:
 - Total concurrency limit and the experimental cancel switch
 
 No account or extra keys are required; the plugin reuses the agent providers configured
-in Paseo. Requires Paseo 0.16.0 or later. The daemon runs on any platform Paseo supports,
+in Paseo. Requires Paseo 0.16.1 or later. The daemon runs on any platform Paseo supports,
 and the interface works on desktop, web, and mobile clients.
 
 ## Data and permissions
@@ -90,12 +99,15 @@ and the interface works on desktop, web, and mobile clients.
   context assembly and UI display), plus child-agent metadata and provider subagent status
   events for the composer Subagent manager;
 - Writes: the local plugin data directory `~/.paseo/plugin-data/paseo-bytheway/`
-  (thread registry and model settings memory; model memory contains only control ids/values,
-  no transcript content, and keeps the 50 most recently used models);
+  (thread registry, model settings memory, and the attachments you upload — images and
+  files — under `uploads/<threadId>/<messageId>/`; model memory contains only control
+  ids/values, no transcript
+  content, and keeps the 50 most recently used models). Removing a thread deletes its
+  upload directory; a periodic sweep removes upload directories older than 14 days;
 - Network: remote images in side-chat messages load directly from their HTTP(S) URLs on
   the client, so the image host receives that request and the client's network address.
-  Side-chat questions, context snapshots, and tool results are sent to the model provider
-  you configured in Paseo, exactly like a normal Paseo session. When the panel opens, the
+  Side-chat questions, context snapshots, attachments, and tool results are sent to the model
+  provider you configured in Paseo, exactly like a normal Paseo session. When the panel opens, the
   plugin fetches `package.json` / `paseo-plugin.json` from this repository's main branch on
   `raw.githubusercontent.com` to check for updates (version metadata only; no session data
   is uploaded). The feedback link in the panel opens this repository's GitHub issue form
@@ -137,3 +149,7 @@ and the interface works on desktop, web, and mobile clients.
 - Model memory uses effective values. If a stored Mode, thinking level, or Feature no longer
   exists for the current provider/model, it falls back to the current default instead of
   blocking the send.
+- Non-image attachments are referenced by local path: the side agent needs its file-reading
+  tools to open them (read-only modes can still read). Attachment picking and clipboard paste
+  require the desktop (web) client; mobile clients send text as before. Bubble echo only covers
+  messages sent since 0.7.1 (earlier messages have no local upload copy).

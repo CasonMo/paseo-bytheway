@@ -48,15 +48,23 @@ export function convertEntries(entries: TimelineEntry[], fallbackInitialPrompt?:
             normalizePrompt(item.text) === normalizePrompt(initialPrompt.text),
         )
       : -1;
+  const duplicateItem = duplicateUserIndex >= 0 ? rawEntries[duplicateUserIndex].item : null;
+  const duplicateMessageId =
+    duplicateItem && duplicateItem.type === "user_message"
+      ? (duplicateItem.clientMessageId ?? duplicateItem.messageId)
+      : undefined;
 
   const items: LiveItem[] = [];
   for (const [index, { entry, item }] of rawEntries.entries()) {
     const key = `seq:${entry.seqStart}`;
     const turnId = (entry as unknown as { turnId?: string }).turnId ?? null;
     switch (item.type) {
-      case "user_message":
-        if (index !== duplicateUserIndex) items.push({ kind: "user", key, text: item.text });
+      case "user_message": {
+        if (index === duplicateUserIndex) break;
+        const messageId = item.clientMessageId ?? item.messageId;
+        items.push({ kind: "user", key, text: item.text, ...(messageId ? { messageId } : {}) });
         break;
+      }
       case "assistant_message":
         items.push({
           kind: "assistant",
@@ -109,6 +117,7 @@ export function convertEntries(entries: TimelineEntry[], fallbackInitialPrompt?:
       kind: "user",
       key: `initial:${initialPrompt.callId ?? "prompt"}`,
       text: initialPrompt.text,
+      ...(duplicateMessageId ? { messageId: duplicateMessageId } : {}),
     });
   }
   return items;

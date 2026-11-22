@@ -1,9 +1,9 @@
 {
   "id": "paseo-bytheway",
   "name": "ByTheWay 侧聊",
-  "description": "ByTheWay (btw) · 旁路侧聊：/btw 提问，首条提问回显、实时执行流、实时线程目录、后台任务、workspace badge/composer 入口、多线程、Subagent 管理、模型配置记忆、agent 直连上下文、provider 原生 Mode/思考/Feature 控制 / ByTheWay (btw) side chats: use /btw to ask, with original-prompt recall, live execution stream and thread directory, background tasks, workspace badges/composer entry, threads, subagent management, per-model settings memory, agent-linked context, provider-native mode/thinking/feature controls",
+  "description": "ByTheWay (btw) · 旁路侧聊：/btw 提问，首条提问回显、实时执行流、实时线程目录、后台任务、workspace badge/composer 入口、多线程、Subagent 管理、模型配置记忆、agent 直连上下文、provider 原生 Mode/思考/Feature 控制、图片/文件附件与剪贴板粘贴、附件气泡回显与预览 / ByTheWay (btw) side chats: use /btw to ask, with original-prompt recall, live execution stream and thread directory, background tasks, workspace badges/composer entry, threads, subagent management, per-model settings memory, agent-linked context, provider-native mode/thinking/feature controls, image/file attachments with clipboard paste, bubble echo and preview",
   "requirements": {
-    "paseo": ">=0.16.0"
+    "paseo": ">=0.16.1"
   },
   "media": [
     "assets/screenshot.png",

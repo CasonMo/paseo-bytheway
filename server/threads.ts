@@ -1,6 +1,12 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import { randomUUID } from "node:crypto";
 import { PROMPT_MARKERS } from "../shared/prompt-markers";
 import type { TextAttachment, ThreadRuntimeStatus } from "../shared/contracts";
+import {
+  attachmentFallbackText,
+  splitUserAttachments,
+  type UserAttachment,
+} from "../shared/attachments";
 import type { SidekickSettings } from "../shared/settings";
 import type { ThreadMode, ThreadRecord } from "../shared/types";
 import type { EffectiveAgentConfig } from "../shared/model-configs";
@@ -23,6 +29,12 @@ import {
   PASSIVE_SNAPSHOT_MESSAGES,
 } from "./context";
 import * as registry from "./registry";
+import {
+  removeThreadUploads,
+  saveMessageAttachments,
+  sweepStaleUploads,
+  type UploadedFileAttachment,
+} from "./uploads";
 
 export type PaseoApi = PluginHandlerContext["paseo"];
 type AgentHandle = ReturnType<PaseoApi["agents"]["ref"]>;
@@ -31,6 +43,7 @@ type WorkspaceHandle = ReturnType<PaseoApi["workspaces"]["ref"]>;
 type CreateOptions = Parameters<WorkspaceHandle["agents"]["create"]>[0];
 type Attachment = NonNullable<CreateOptions["attachments"]>[number];
 type OutgoingTextAttachment = { type: "text"; mimeType: "text/plain"; title: string; text: string };
+type OutgoingAttachment = OutgoingTextAttachment | UploadedFileAttachment;
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 const TITLE_MAX = 60;
@@ -187,6 +200,7 @@ async function assertConcurrency(paseo: PaseoApi, settings: SidekickSettings): P
 export interface AskInput {
   mainAgentId: string;
   question: string;
+  attachments?: UserAttachment[];
   mode: ThreadMode;
   target: { kind: "continue"; threadId?: string } | { kind: "new" };
   model?: string;
@@ -285,6 +299,7 @@ export async function askThread(paseo: PaseoApi, settings: SidekickSettings, inp
     thinkingOptionId: selectedThinkingOptionId,
     featureValues: selectedFeatureValues,
     question: input.question,
+    attachments: input.attachments,
     contextMode,
     seedFromAgentId: input.continuationOf ?? null,
   });
@@ -322,7 +337,7 @@ async function continueThread(
   // 运行中不再报错：直接打断当前回答并发送。
   const behavior = resolveSendBehavior(busy);
 
-  const attachments: OutgoingTextAttachment[] = [];
+  const attachments: OutgoingAttachment[] = [];
   if (contextMode.passive) {
     try {
       const tail = await fetchTranscriptTail(paseo, thread.mainAgentId);
@@ -365,11 +380,21 @@ async function continueThread(
     }
   }
 
+  const userAttachments = input.attachments ?? [];
+  const { images } = splitUserAttachments(userAttachments);
+  const messageId = randomUUID();
+  if (userAttachments.length > 0) {
+    attachments.push(...(await saveMessageAttachments(thread.id, messageId, userAttachments)));
+  }
+  const question = input.question || attachmentFallbackText(userAttachments);
+
   const sendOptions = {
+    messageId,
     ...(attachments.length > 0 ? { attachments } : {}),
+    ...(images.length > 0 ? { images } : {}),
     ...(behavior !== "send" ? { activeTurnBehavior: behavior } : {}),
   };
-  await handle.send(input.question, sendOptions);
+  await handle.send(question, sendOptions);
 
   const after = await handle.refresh().catch(() => null);
   const updated = after?.agent ?? agent;
@@ -422,6 +447,7 @@ interface CreateThreadInput {
   /** 从主会话继承的 provider features（如 opencode auto_accept）。 */
   featureValues: Record<string, unknown>;
   question: string;
+  attachments?: UserAttachment[];
   contextMode: ContextModeInfo;
   seedFromAgentId: string | null;
 }
@@ -441,7 +467,7 @@ async function createThread(
     passive: input.contextMode.passive,
   });
 
-  const attachments: OutgoingTextAttachment[] = [];
+  const attachments: OutgoingAttachment[] = [];
   let syncCursor: ThreadRecord["syncCursor"] = null;
   try {
     if (input.contextMode.passive) {
@@ -474,11 +500,19 @@ async function createThread(
     console.error("[bytheway] snapshot build failed", message(error));
   }
 
+  const userAttachments = input.attachments ?? [];
+  const { images } = splitUserAttachments(userAttachments);
+  const messageId = randomUUID();
+  if (userAttachments.length > 0) {
+    attachments.push(...(await saveMessageAttachments(threadId, messageId, userAttachments)));
+  }
+  const question = input.question || attachmentFallbackText(userAttachments);
+
   // 接续线程（换模型/模式后新开）：让新线程先读取旧线程的上下文
-  let prompt = input.question;
+  let prompt = question;
   if (input.seedFromAgentId) {
     if (input.contextMode.toolsAvailable) {
-      prompt = `${PROMPT_MARKERS.continuationPrefix}（用户更换了模型或模式）。请先调用 MCP 工具 get_agent_activity 读取 agent ${input.seedFromAgentId} 的最近活动，了解先前对话的结论与语气，${PROMPT_MARKERS.continuationQuestion}\n\n${input.question}`;
+      prompt = `${PROMPT_MARKERS.continuationPrefix}（用户更换了模型或模式）。请先调用 MCP 工具 get_agent_activity 读取 agent ${input.seedFromAgentId} 的最近活动，了解先前对话的结论与语气，${PROMPT_MARKERS.continuationQuestion}\n\n${question}`;
     } else {
       try {
         const tail = await fetchTranscriptTail(paseo, input.seedFromAgentId, 80);
@@ -500,7 +534,7 @@ async function createThread(
   }
 
   const now = Date.now();
-  const title = `[侧聊] ${truncateOneLine(input.question)}`;
+  const title = `[侧聊] ${truncateOneLine(question)}`;
   const handle = await paseo.workspaces.ref(input.workspaceId).agents.create({
     config: {
       provider: input.model ? `${input.provider}/${input.model}` : input.provider,
@@ -511,6 +545,8 @@ async function createThread(
     },
     title,
     prompt,
+    clientMessageId: messageId,
+    ...(images.length > 0 ? { images } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
     labels: { sidekick: "1", "sidekick.thread": threadId, "sidekick.main": input.mainAgentId },
     metadata: {
@@ -649,6 +685,7 @@ export async function removeThread(paseo: PaseoApi, threadId: string): Promise<v
     // best effort
   }
   registry.removeThread(threadId);
+  await removeThreadUploads(threadId).catch(() => {});
 }
 
 export async function renameThread(paseo: PaseoApi, threadId: string, title: string): Promise<void> {
@@ -678,6 +715,7 @@ export async function rebuildThread(
   thinkingOverride?: string | null,
   modeOverride?: string | null,
   featureValuesOverride?: Record<string, unknown>,
+  userAttachments?: UserAttachment[],
 ): Promise<{ threadId: string; agentId: string; effectiveConfig: EffectiveAgentConfig }> {
   await registry.ensureLoaded();
   const thread = registry.getThread(threadId);
@@ -735,11 +773,14 @@ export async function rebuildThread(
     toolsAvailable: contextMode.toolsAvailable,
     passive: contextMode.passive,
   });
+  const effectiveQuestion =
+    question?.trim() ||
+    (userAttachments?.length ? attachmentFallbackText(userAttachments) : "");
   const seed = contextMode.toolsAvailable
-    ? `${PROMPT_MARKERS.rebuildPrefix}。请先调用 MCP 工具 get_agent_activity 读取 agent ${oldAgentId} 的最近活动，了解该线程此前的问答与结论，继承其上下文与语气。${PROMPT_MARKERS.rebuildQuestion}\n\n${question?.trim() || PROMPT_MARKERS.emptyRebuildSummary}`
-    : `${PROMPT_MARKERS.rebuildPrefix}。\n\n${question?.trim() || PROMPT_MARKERS.emptyRebuildWait}`;
+    ? `${PROMPT_MARKERS.rebuildPrefix}。请先调用 MCP 工具 get_agent_activity 读取 agent ${oldAgentId} 的最近活动，了解该线程此前的问答与结论，继承其上下文与语气。${PROMPT_MARKERS.rebuildQuestion}\n\n${effectiveQuestion || PROMPT_MARKERS.emptyRebuildSummary}`
+    : `${PROMPT_MARKERS.rebuildPrefix}。\n\n${effectiveQuestion || PROMPT_MARKERS.emptyRebuildWait}`;
 
-  const attachments: OutgoingTextAttachment[] = [];
+  const attachments: OutgoingAttachment[] = [];
   if (!contextMode.toolsAvailable) {
     try {
       const tail = await fetchTranscriptTail(paseo, oldAgentId, 80);
@@ -759,6 +800,12 @@ export async function rebuildThread(
     }
   }
 
+  const { images } = splitUserAttachments(userAttachments ?? []);
+  const messageId = randomUUID();
+  if ((userAttachments ?? []).length > 0) {
+    attachments.push(...(await saveMessageAttachments(thread.id, messageId, userAttachments ?? [])));
+  }
+
   const now = Date.now();
   const handle = await paseo.workspaces.ref(thread.workspaceId).agents.create({
     config: {
@@ -770,6 +817,8 @@ export async function rebuildThread(
     },
     title: thread.title,
     prompt: seed,
+    clientMessageId: messageId,
+    ...(images.length > 0 ? { images } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
     labels: { sidekick: "1", "sidekick.thread": thread.id, "sidekick.main": thread.mainAgentId },
     metadata: {
@@ -955,6 +1004,8 @@ export async function reapOrphans(paseo: PaseoApi): Promise<void> {
         }
       }
     }
+
+    await sweepStaleUploads();
   } catch (error) {
     console.error("[bytheway] reaper failed", message(error));
   }

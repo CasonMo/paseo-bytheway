@@ -99,9 +99,23 @@ function applyTimelineItem(state: LiveState, raw: RawItem, turnId: string | null
     case "user_message": {
       const chunk = (raw.text ?? "").replace(/\r/g, "");
       if (!/\S/.test(chunk)) return state;
-      if (isInitialDuplicate(state.items, chunk)) return state;
+      const messageId = raw.clientMessageId ?? raw.messageId;
+      if (isInitialDuplicate(state.items, chunk)) {
+        if (!messageId) return state;
+        const items = state.items.map((item) =>
+          item.kind === "user" && item.key.startsWith("initial:") && !item.messageId
+            ? { ...item, messageId }
+            : item,
+        );
+        return { ...state, items };
+      }
       const next = closeStreams(state);
-      return pushItem(next, { kind: "user", key: liveKey(next), text: chunk });
+      return pushItem(next, {
+        kind: "user",
+        key: liveKey(next),
+        text: chunk,
+        ...(messageId ? { messageId } : {}),
+      });
     }
     case "assistant_message": {
       // 官方语义：流事件是增量片段（delta），需要 text += chunk 追加。

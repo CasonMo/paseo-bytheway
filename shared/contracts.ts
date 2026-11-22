@@ -1,5 +1,10 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
+import {
+  MAX_ATTACHMENT_BASE64_CHARS,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TOTAL_BASE64_CHARS,
+} from "./attachments";
 
 /* ------------------------------------------------------------------ */
 /* 公共 schema                                                          */
@@ -60,6 +65,27 @@ export const textAttachmentSchema = z.object({
 });
 export type TextAttachment = z.infer<typeof textAttachmentSchema>;
 
+/** 用户随提问上传的图片/文件（base64 传输；图片走 images 通道，文件落盘后路径引用）。 */
+export const userAttachmentSchema = z
+  .object({
+    kind: z.enum(["image", "file"]),
+    fileName: z.string().min(1).max(255),
+    mimeType: z.string().min(1).max(200),
+    data: z.string().min(1).max(MAX_ATTACHMENT_BASE64_CHARS),
+  })
+  .refine((item) => item.kind !== "image" || item.mimeType.startsWith("image/"), {
+    message: "image attachment must have an image/* mimeType",
+  });
+export type UserAttachmentInput = z.infer<typeof userAttachmentSchema>;
+
+export const userAttachmentsSchema = z
+  .array(userAttachmentSchema)
+  .max(MAX_ATTACHMENT_COUNT)
+  .refine(
+    (list) => list.reduce((sum, item) => sum + item.data.length, 0) <= MAX_TOTAL_BASE64_CHARS,
+    { message: "attachments exceed the total size limit" },
+  );
+
 /* ------------------------------------------------------------------ */
 /* RPC 目录                                                             */
 /* ------------------------------------------------------------------ */
@@ -98,24 +124,29 @@ export const modelConfigsList = defineRpc({
 
 export const threadsAsk = defineRpc({
   name: "bytheway.threads.ask",
-  input: z.object({
-    mainAgentId: z.string().min(1),
-    question: z.string().trim().min(1).max(8000),
-    mode: threadModeSchema.default("ask"),
-    target: z
-      .union([
-        z.object({ kind: z.literal("continue"), threadId: z.string().min(1).optional() }),
-        z.object({ kind: z.literal("new") }),
-      ])
-      .default({ kind: "continue" }),
-    model: z.string().min(1).max(200).optional(),
-    modeId: z.string().min(1).max(200).nullable().optional(),
-    thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
-    featureValues: featureValuesSchema.optional(),
-    /** 换模型/模式新开线程时：接续的旧线程 agent id（新线程会读取其上下文）。 */
-    continuationOf: z.string().min(1).optional(),
-    clientRequestId: z.string().min(1).max(200).optional(),
-  }),
+  input: z
+    .object({
+      mainAgentId: z.string().min(1),
+      question: z.string().trim().max(8000),
+      attachments: userAttachmentsSchema.optional(),
+      mode: threadModeSchema.default("ask"),
+      target: z
+        .union([
+          z.object({ kind: z.literal("continue"), threadId: z.string().min(1).optional() }),
+          z.object({ kind: z.literal("new") }),
+        ])
+        .default({ kind: "continue" }),
+      model: z.string().min(1).max(200).optional(),
+      modeId: z.string().min(1).max(200).nullable().optional(),
+      thinkingOptionId: z.string().min(1).max(200).nullable().optional(),
+      featureValues: featureValuesSchema.optional(),
+      /** 换模型/模式新开线程时：接续的旧线程 agent id（新线程会读取其上下文）。 */
+      continuationOf: z.string().min(1).optional(),
+      clientRequestId: z.string().min(1).max(200).optional(),
+    })
+    .refine((input) => input.question.length > 0 || (input.attachments?.length ?? 0) > 0, {
+      message: "question or attachments required",
+    }),
   output: z.object({
     threadId: z.string(),
     agentId: z.string(),
@@ -123,6 +154,24 @@ export const threadsAsk = defineRpc({
     /** 实际生效的发送方式：send=普通发送，interrupt=打断了运行中的回答。 */
     behavior: z.enum(["send", "interrupt"]),
   }),
+});
+
+/** 消息气泡回显用的已落盘附件（图片带 base64；旧消息无副本时为空）。 */
+export const storedAttachmentSchema = z.object({
+  kind: z.enum(["image", "file"]),
+  fileName: z.string(),
+  mimeType: z.string(),
+  data: z.string().optional(),
+});
+export type StoredAttachment = z.infer<typeof storedAttachmentSchema>;
+
+export const uploadsForMessage = defineRpc({
+  name: "bytheway.uploads.for-message",
+  input: z.object({
+    threadId: z.string().min(1).max(200),
+    messageId: z.string().min(1).max(200),
+  }),
+  output: z.object({ attachments: z.array(storedAttachmentSchema) }),
 });
 
 export const threadsArchive = defineRpc({
@@ -154,6 +203,7 @@ export const threadsRebuild = defineRpc({
   input: z.object({
     threadId: z.string().min(1),
     question: z.string().trim().max(8000).optional(),
+    attachments: userAttachmentsSchema.optional(),
     model: z.string().min(1).max(200).optional(),
     modeId: z.string().min(1).max(200).nullable().optional(),
     thinkingOptionId: z.string().min(1).max(200).nullable().optional(),

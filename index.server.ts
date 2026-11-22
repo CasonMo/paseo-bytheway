@@ -13,6 +13,7 @@ import {
   threadsSendToMain,
   threadsSummary,
   updateCheck,
+  uploadsForMessage,
 } from "./shared/contracts";
 import { sidekickSettings, type SidekickSettings } from "./shared/settings";
 import { toThreadView } from "./shared/types";
@@ -39,6 +40,7 @@ import {
   sendToMain,
 } from "./server/threads";
 import { checkUpdate } from "./server/update";
+import { readMessageAttachments } from "./server/uploads";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(sidekickSettings);
@@ -142,6 +144,10 @@ export default function contribute(server: PluginServerContext) {
     return { ok: true };
   });
 
+  server.handle(uploadsForMessage, async (input) => ({
+    attachments: await readMessageAttachments(input.threadId, input.messageId),
+  }));
+
   server.handle(threadsRename, async (input, { paseo }) => {
     await renameThread(paseo, input.threadId, input.title);
     return { ok: true };
@@ -163,6 +169,7 @@ export default function contribute(server: PluginServerContext) {
       input.thinkingOptionId,
       input.modeId,
       input.featureValues,
+      input.attachments,
     );
     await rememberEffectiveConfig(values, result.effectiveConfig);
     return { threadId: result.threadId, agentId: result.agentId };

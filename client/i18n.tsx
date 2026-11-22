@@ -58,6 +58,13 @@ export interface UIStrings {
   inputPlaceholderNew: string;
   send: string;
   sending: string;
+  attach: string;
+  removeAttachment: string;
+  attachmentTooLarge: (limitMb: number) => string;
+  attachmentEmpty: string;
+  attachmentReadFailed: string;
+  tooManyAttachments: (limit: number) => string;
+  attachmentsTotalTooLarge: (limitMb: number) => string;
   stop: string;
   stopping: string;
   sentInterruptToast: string;
@@ -209,6 +216,13 @@ export function useT(): UIStrings {
       inputPlaceholderNew: t("inputPlaceholderNew"),
       send: t("send"),
       sending: t("sending"),
+      attach: t("attach"),
+      removeAttachment: t("removeAttachment"),
+      attachmentTooLarge: (limitMb: number) => t("attachmentTooLarge", { limitMb }),
+      attachmentEmpty: t("attachmentEmpty"),
+      attachmentReadFailed: t("attachmentReadFailed"),
+      tooManyAttachments: (limit: number) => t("tooManyAttachments", { limit }),
+      attachmentsTotalTooLarge: (limitMb: number) => t("attachmentsTotalTooLarge", { limitMb }),
       stop: t("stop"),
       stopping: t("stopping"),
       sentInterruptToast: t("sentInterruptToast"),
