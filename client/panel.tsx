@@ -60,6 +60,7 @@ import {
   takePendingThreadFocus,
 } from "./panel-focus";
 import { bottomOffset, nextScrollFollow } from "./scroll-follow";
+import { useKeyboardInset } from "./use-keyboard-inset";
 import { openSidekickSettings } from "./ui-registration";
 import { useThreadStream } from "./live/store";
 import { SubagentPill } from "./subagents/SubagentPill";
@@ -123,6 +124,8 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   const paseo = usePaseo();
   const toast = useToast();
   const compact = layout.compact;
+  const rootRef = useRef<ComponentRef<typeof View>>(null);
+  const keyboardInset = useKeyboardInset(rootRef);
 
   const listRpc = useRpc(threadsList);
   const askRpc = useRpc(threadsAsk);
@@ -1552,7 +1555,10 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
   /* ---------------- 渲染 ---------------- */
 
   return (
-      <View style={styles.root}>
+      <View
+        ref={rootRef}
+        style={[styles.root, keyboardInset > 0 ? { marginBottom: keyboardInset } : null]}
+      >
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerRow}>

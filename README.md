@@ -16,6 +16,7 @@ Side chats for Paseo agent sessions — ask questions or run small side tasks wi
 - **停止**：先尝试 MCP 辅助取消，5 秒未生效自动提示「打开标签页停止」。
 - **后台任务**：输入框上方显示侧聊 agent 的 background work，可一键停止；打断后的旧工具不会看起来永远卡在 running。
 - **入口可见**：workspace 侧栏行显示侧聊数量 badge；每个主 agent 的 composer 旁有「侧聊」入口。
+- **触屏键盘适配**：iPad 等触屏 Web 端弹出软键盘时，面板底部输入区按 visualViewport 实测遮挡高度自动上抬，收起后复原；桌面与原生端不受影响。
 - **运行中**：按钮互斥——回答中只显示「停止」，空闲时只显示「发送」；回答中按 Enter 发送会打断当前回答、重新开始一轮（toast 提示）。
 - **模型切换**：新建侧聊可跨 Provider 选模型；已有线程仅支持同一 Provider 内**原地**切换模型（会话保持连续，provider 创建时固定）。切换直接走 Paseo 0.16 的 composer/agent 控制接口，毫秒级生效，不再等待辅助 agent。
 - **模型配置记忆**：默认开启。按 `provider/model` 记住用户实际使用过的 Mode、思考档和 Features；下次选到同一模型自动恢复，不同模型互不影响。可在设置中关闭。以「发送/重建成功后实际生效的值」为准，选择「跟随主会话」不会套用模型记忆。

@@ -91,7 +91,8 @@ Settings → Plugins → ByTheWay 侧聊:
 
 No account or extra keys are required; the plugin reuses the agent providers configured
 in Paseo. Requires Paseo 0.16.1 or later. The daemon runs on any platform Paseo supports,
-and the interface works on desktop, web, and mobile clients.
+and the interface works on desktop, web, and mobile clients. On touch web clients such as
+iPad, the composer lifts above the on-screen keyboard while it is open.
 
 ## Data and permissions
 
