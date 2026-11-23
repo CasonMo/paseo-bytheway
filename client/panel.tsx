@@ -1,7 +1,7 @@
 import type { PluginAgentPanelProps } from "@getpaseo/plugin/client";
 import { useAgent, useComposers, usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
-import { Image, KeyboardAvoidingView, Platform, Pressable, Text, View } from "react-native";
+import { Image, Platform, Pressable, Text, View } from "react-native";
 import {
   threadsArchive,
   threadsAsk,
@@ -1559,8 +1559,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
         ref={rootRef}
         style={[styles.root, keyboardInset > 0 ? { marginBottom: keyboardInset } : null]}
       >
-      {/* iOS 原生端：键盘弹出时把输入区顶上去（web 端由 useKeyboardInset 处理） */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" enabled={Platform.OS === "ios"}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
@@ -2434,7 +2432,6 @@ export function SidekickPanel({ theme, layout, host, agentId, navigation }: Plug
           </View>
         </View>
       </OverlaySheet>
-      </KeyboardAvoidingView>
       </View>
   );
 }
